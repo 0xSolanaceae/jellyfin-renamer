@@ -12,13 +12,13 @@ def rename_files():
 
     files = os.listdir(directory)
 
-    pattern = re.compile(r'(.+)\.S\d+E(\d+)\.(.+?)\.?1080p\.(BluRay|WEB-HD|WEB-DL)\.x(264|265)\..+')
+    pattern = re.compile(r'(.+)\.S\d+E(\d+)\.(.+?)\.(144p|240p|360p|480p|720p|1080p|2160p)\.(BluRay|WEB-HD|WEB-DL|NF)\.x(264|265)\.\d+MB-Pahe\.in\..+')
     proposed_renames = []
 
     for filename in files:
         match = pattern.match(filename)
         if match:
-            episode_name = match.group(3).replace('.', ' ').replace(' ', '_')
+            episode_name = match.group(1).replace('.', ' ').replace(' ', '_')
             episode_number = match.group(2)
             file_extension = os.path.splitext(filename)[1]
             new_name = f"{episode_name}_{season}E{episode_number}_({year}){file_extension}"
