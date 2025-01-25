@@ -3,6 +3,7 @@ import re
 
 def rename_files():
     directory = input("Please enter the directory path for the files to be renamed: ")
+    print("")
     if not os.path.isdir(directory):
         print(f"The directory '{directory}' does not exist.")
         return
@@ -12,16 +13,28 @@ def rename_files():
 
     files = os.listdir(directory)
 
-    pattern = re.compile(r'(.+)\.S\d+E(\d+)\.(.+?)\.(144p|240p|360p|480p|720p|1080p|2160p)\.(BluRay|WEB-HD|WEB-DL|NF)\.x(264|265)\.\d+MB-Pahe\.in\..+')
+    pattern = re.compile(
+        r'(?P<show_name>.+?)\.S(?P<season>\d+)E(?P<episode>\d+)\.(?P<episode_title>.*?)'
+        r'(?:\.(?P<resolution>720p|1080p))?'
+        r'(?:\.(?P<source>NF|WEB-DL))?'
+        r'(?:\.x(?P<codec>264|265))?'
+        r'(?:\.(?P<size>\d+MB))?'
+        r'-Pahe\.in\.(?P<extension>mkv|mp4)'
+    )
     proposed_renames = []
 
     for filename in files:
         match = pattern.match(filename)
         if match:
-            episode_name = match.group(1).replace('.', ' ').replace(' ', '_')
-            episode_number = match.group(2)
+            show_name = match.group('show_name').replace('.', ' ').replace(' ', '_')
+            episode_number = match.group('episode')
+            episode_title = (match.group('episode_title') or "").replace('.', ' ').replace(' ', '_')
             file_extension = os.path.splitext(filename)[1]
-            new_name = f"{episode_name}_{season}E{episode_number}_({year}){file_extension}"
+            
+            new_name = f"{show_name}_{season}E{episode_number}"
+            if episode_title:
+                new_name += f"_{episode_title}"
+            new_name += f"_({year}){file_extension}"
             proposed_renames.append((filename, new_name))
         else:
             print(f"Filename '{filename}' does not match the expected pattern")
@@ -35,6 +48,7 @@ def rename_files():
         if confirm.lower() == 'y':
             for old_name, new_name in proposed_renames:
                 os.rename(os.path.join(directory, old_name), os.path.join(directory, new_name))
+            print("Files have been renamed successfully.")
         else:
             print("No files were renamed.")
     else:
