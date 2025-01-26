@@ -24,13 +24,16 @@ def rename_files():
     proposed_renames = []
 
     for filename in files:
-        match = pattern.match(filename)
-        if match:
-            show_name = match.group('show_name').replace('.', ' ').replace(' ', '_')
-            episode_number = match.group('episode')
-            episode_title = (match.group('episode_title') or "").replace('.', ' ').replace(' ', '_')
+        if match := pattern.match(filename):
+            show_name = match['show_name'].replace('.', ' ').replace(' ', '_')
+            episode_number = match['episode']
+            episode_title = (
+                (match['episode_title'] or "")
+                .replace('.', ' ')
+                .replace(' ', '_')
+            )
             file_extension = os.path.splitext(filename)[1]
-            
+
             new_name = f"{show_name}_{season}E{episode_number}"
             if episode_title:
                 new_name += f"_{episode_title}"
