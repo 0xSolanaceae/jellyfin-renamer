@@ -8,18 +8,17 @@ def rename_files():
         print(f"The directory '{directory}' does not exist.")
         return
 
-    season = "S04"
-    year = "2024"
+    season = "S01"
+    year = "2022"
 
     files = os.listdir(directory)
 
     pattern = re.compile(
-        r'(?P<show_name>.+?)\.S(?P<season>\d+)E(?P<episode>\d+)\.(?P<episode_title>.*?)'
-        r'(?:\.(?P<resolution>720p|1080p))?'
-        r'(?:\.(?P<source>NF|WEB-DL))?'
-        r'(?:\.x(?P<codec>264|265))?'
-        r'(?:\.(?P<size>\d+MB))?'
-        r'-Pahe\.in\.(?P<extension>mkv|mp4)'
+        r'^(?P<show_name>.+?)\.S(?P<season>\d{2})E(?P<episode>\d{2})\.'
+        r'(?P<episode_title>.+?)\.'
+        r'(?P<resolution>\d{3,4}p)\.BluRay\.x265\.(?P<audio>.+?)\.'
+        r'(?P<group>.+?)\.(?P<extension>mkv|mp4)$',
+        re.IGNORECASE
     )
     proposed_renames = []
 
@@ -32,7 +31,7 @@ def rename_files():
                 .replace('.', ' ')
                 .replace(' ', '_')
             )
-            file_extension = os.path.splitext(filename)[1]
+            file_extension = f".{match['extension']}"
 
             new_name = f"{show_name}_{season}E{episode_number}"
             if episode_title:
