@@ -8,35 +8,33 @@ def rename_files():
         print(f"The directory '{directory}' does not exist.")
         return
 
-    season = "S01"
-    year = "2022"
+    dir_name = os.path.basename(directory)
+    season_match = re.search(r's(\d+)', dir_name, re.IGNORECASE)
+    if season_match:
+        season_num = int(season_match.group(1))
+        season = f"S{season_num:02d}"
+    else:
+        season = input("Enter season number (e.g., S01): ")
+        if not season.startswith('S'):
+            season = f"S{int(season):02d}"
+    
+    year = input("Enter year (leave blank if none): ")
 
     files = os.listdir(directory)
-
     pattern = re.compile(
-        r'^(?P<show_name>.+?)\.S(?P<season>\d{2})E(?P<episode>\d{2})\.'
-        r'(?P<episode_title>.+?)\.'
-        r'(?P<resolution>\d{3,4}p)\.BluRay\.x265\.(?P<audio>.+?)\.'
-        r'(?P<group>.+?)\.(?P<extension>mkv|mp4)$',
+        r'^S(?P<season>\d{2})E(?P<episode>\d{2})\.(?P<title>.*?)\.(?P<resolution>\d{3,4}p)\.'
+        r'(?P<source>[\w-]+)\.(?P<codec>x\d{3})\.(?P<bit_depth>\d{2}Bit)\.(?P<audio>\d+CH)-(?P<group>.*?)\.(?P<extension>mkv|mp4)$',
         re.IGNORECASE
     )
     proposed_renames = []
 
     for filename in files:
         if match := pattern.match(filename):
-            show_name = match['show_name'].replace('.', ' ').replace(' ', '_')
             episode_number = match['episode']
-            episode_title = (
-                (match['episode_title'] or "")
-                .replace('.', ' ')
-                .replace(' ', '_')
-            )
+            episode_title = match['title'].replace('.', '_')
             file_extension = f".{match['extension']}"
 
-            new_name = f"{show_name}_{season}E{episode_number}"
-            if episode_title:
-                new_name += f"_{episode_title}"
-            new_name += f"_({year}){file_extension}"
+            new_name = f"{episode_title}_{season}E{episode_number}{f'({year})' if year else ''}{file_extension}"
             proposed_renames.append((filename, new_name))
         else:
             print(f"Filename '{filename}' does not match the expected pattern")
@@ -55,6 +53,40 @@ def rename_files():
             print("No files were renamed.")
     else:
         print("No files matched the expected pattern.")
+
+    # Option to try with a more flexible pattern
+    if not proposed_renames:
+        retry = input("\nWould you like to try with a more flexible pattern? (y/n): ")
+        if retry.lower() == 'y':
+            flexible_pattern = re.compile(
+                r'^S(?P<season>\d{2})E(?P<episode>\d{2})\.(?P<title>.*?)\.(?P<resolution>\d{3,4}p).*\.(?P<extension>mkv|mp4)$',
+                re.IGNORECASE
+            )
+            proposed_renames = []
+            
+            for filename in files:
+                if match := flexible_pattern.match(filename):
+                    episode_number = match['episode']
+                    episode_title = match['title'].replace('.', '_')
+                    file_extension = f".{match['extension']}"
+                    
+                    new_name = f"{episode_title}_{season}E{episode_number}{f'({year})' if year else ''}{file_extension}"
+                    proposed_renames.append((filename, new_name))
+            
+            if proposed_renames:
+                print("\nProposed renames with flexible pattern:")
+                for old_name, new_name in proposed_renames:
+                    print(f"'{old_name}' --> '{new_name}'")
+                
+                confirm = input("\nDo you want to rename these files? (y/n): ")
+                if confirm.lower() == 'y':
+                    for old_name, new_name in proposed_renames:
+                        os.rename(os.path.join(directory, old_name), os.path.join(directory, new_name))
+                    print("Files have been renamed successfully.")
+                else:
+                    print("No files were renamed.")
+            else:
+                print("No files matched the flexible pattern either.")
 
 if __name__ == "__main__":
     rename_files()
