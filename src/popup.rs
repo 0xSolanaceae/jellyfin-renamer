@@ -165,22 +165,56 @@ impl eframe::App for RenameConfirmationApp {
     }
 }
 
+use std::sync::{Arc, Mutex};
+
 pub fn show_rename_dialog(file_path: &str) -> bool {
-    let app = RenameConfirmationApp::new(file_path);
-    
+    // Shared state for confirmation result
+    let confirmed = Arc::new(Mutex::new(None));
+    let confirmed_clone = confirmed.clone();
+
+    let app = RenameConfirmationAppWithCallback::new(file_path, Box::new(move |result| {
+        *confirmed_clone.lock().unwrap() = Some(result);
+    }));
+
     let mut native_options = eframe::NativeOptions::default();
     native_options.viewport.inner_size = Some(egui::vec2(420.0, 360.0));
-    
-    match eframe::run_native(
+
+    // Run the app
+    let _ = eframe::run_native(
         "Jellyfin Rename",
         native_options,
         Box::new(|cc| {
-            // Set dark mode
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(app))
+            Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(app))
         }),
-    ) {
-        Ok(_) => true,
-        Err(_) => false
+    );
+
+    // Return the user's choice from the shared state, defaulting to false if no choice was made
+    confirmed.lock().unwrap().unwrap_or(false)
+}
+
+// Wrapper app that takes a callback for confirmation
+pub struct RenameConfirmationAppWithCallback {
+    inner: RenameConfirmationApp,
+    on_confirm: Box<dyn Fn(bool) + Send + Sync>,
+}
+
+impl RenameConfirmationAppWithCallback {
+    pub fn new(file_path: &str, on_confirm: Box<dyn Fn(bool) + Send + Sync>) -> Self {
+        Self {
+            inner: RenameConfirmationApp::new(file_path),
+            on_confirm,
+        }
+    }
+}
+
+impl eframe::App for RenameConfirmationAppWithCallback {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.inner.update(ctx, frame);
+        if let Some(confirmed) = self.inner.confirmed {
+            (self.on_confirm)(confirmed);
+            // Prevent repeated callback
+            self.inner.confirmed = None;
+        }
     }
 }
