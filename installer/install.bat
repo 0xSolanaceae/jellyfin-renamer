@@ -26,7 +26,7 @@ mkdir "C:\Program Files\JellyfinRename" 2>nul
 
 :: Copy the executable and icon
 echo [2/4] Copying executable...
-copy /Y "%~dp0..\target\release\jellyfin-rename.exe" "C:\Program Files\JellyfinRename\"
+copy /Y "%~dp0..\jellyfin-rename.exe" "C:\Program Files\JellyfinRename\"
 echo [3/4] Copying icon...
 copy /Y "%~dp0..\assets\jellyfin.ico" "C:\Program Files\JellyfinRename\"
 
