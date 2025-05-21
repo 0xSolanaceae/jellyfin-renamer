@@ -7,53 +7,63 @@ use std::fs;
 mod popup;
 
 fn main() {
-    // Get command line arguments
     let args: Vec<String> = env::args().collect();
     
-    // Check if a file path was provided
     if args.len() < 2 {
         return;
     }
     
-    let file_path = &args[1];
+    let file_paths: Vec<String> = args[1..].to_vec();
     
-    // Show confirmation dialog
-    if popup::show_rename_dialog(file_path) {
-        rename_to_helloworld(file_path);
+    // Show dialog for all files, not just the first one
+    let mut should_rename = true;
+    for file_path in &file_paths {
+        if !popup::show_rename_dialog(file_path) {
+            should_rename = false;
+            break;
+        }
+    }
+    if should_rename {
+        rename_to_helloworld(&file_paths);
     }
 }
 
-fn rename_to_helloworld(file_path: &str) {
-    let path = Path::new(file_path);
+fn rename_to_helloworld(file_paths: &[String]) {
+    // Use a counter to make filenames unique when there are multiple files
+    let mut counter = 0;
     
-    // Make sure the file exists
-    if !path.exists() {
-        return;
-    }
-    
-    // Get parent directory
-    let parent = match path.parent() {
-        Some(p) => p,
-        None => {
-            return;
+    for file_path in file_paths {
+        let path = Path::new(file_path);
+        
+        if !path.exists() {
+            continue;
         }
-    };
-    
-    // Get the file extension (if any)
-    let extension = match path.extension() {
-        Some(ext) => format!(".{}", ext.to_string_lossy()),
-        None => String::new(),
-    };
-    
-    // Create the new name with original extension
-    let new_name = format!("helloworld{}", extension);
-    
-    // Create the new path
-    let new_path = parent.join(new_name);
-    
-    // Rename the file
-    match fs::rename(path, &new_path) {
-        Ok(_) => {},
-        Err(_) => {},
+        
+        let parent = match path.parent() {
+            Some(p) => p,
+            None => {
+                continue;
+            }
+        };
+        
+        let extension = match path.extension() {
+            Some(ext) => format!(".{}", ext.to_string_lossy()),
+            None => String::new(),
+        };
+        
+        // Create unique filename with counter if there are multiple files
+        let new_name = if file_paths.len() > 1 {
+            counter += 1;
+            format!("helloworld_{}{}", counter, extension)
+        } else {
+            format!("helloworld{}", extension)
+        };
+        
+        let new_path = parent.join(new_name);
+        
+        match fs::rename(path, &new_path) {
+            Ok(_) => {},
+            Err(_) => {},
+        }
     }
 }
