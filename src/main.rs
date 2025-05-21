@@ -4,6 +4,8 @@ use std::env;
 use std::path::Path;
 use std::fs;
 
+mod popup;
+
 fn main() {
     // Get command line arguments
     let args: Vec<String> = env::args().collect();
@@ -14,7 +16,11 @@ fn main() {
     }
     
     let file_path = &args[1];
-    rename_to_helloworld(file_path);
+    
+    // Show confirmation dialog
+    if popup::show_rename_dialog(file_path) {
+        rename_to_helloworld(file_path);
+    }
 }
 
 fn rename_to_helloworld(file_path: &str) {
