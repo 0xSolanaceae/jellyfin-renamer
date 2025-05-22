@@ -5,4 +5,4 @@ Windows Registry Editor Version 5.00
 "Icon"="C:\\Program Files\\JellyfinRename\\jellyfin.ico,0"
 
 [HKEY_CLASSES_ROOT\*\shell\JellyfinRename\command]
-@="\"C:\\Program Files\\JellyfinRename\\jellyfin-rename.exe\" \"%1\""
+@="\"C:\\Program Files\\JellyfinRename\\jellyfin-rename.exe\" \"%V\""
