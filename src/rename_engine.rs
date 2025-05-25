@@ -4,8 +4,6 @@ use std::io;
 
 /// Processes a filename to remove unwanted patterns and improve readability
 pub fn process_filename(filename: &str) -> String {
-    println!("Debug: Starting with filename: '{}'", filename);
-    
     let mut processed = filename.to_string();
     
     // Remove common unwanted patterns (case insensitive)
@@ -35,9 +33,7 @@ pub fn process_filename(filename: &str) -> String {
     ];
     
     // Case insensitive pattern removal
-    for pattern in &patterns_to_remove {
-        let pattern_lower = pattern.to_lowercase();
-        let original_len = processed.len();
+    for pattern in &patterns_to_remove {        let pattern_lower = pattern.to_lowercase();
         
         // Keep replacing until no more matches found
         loop {
@@ -46,22 +42,15 @@ pub fn process_filename(filename: &str) -> String {
                 processed = format!("{}{}", &processed[..pos], &processed[pos + pattern.len()..]);
             } else {
                 break;
-            }
-        }
-        
-        if processed.len() != original_len {
-            println!("Debug: Removed '{}', now: '{}'", pattern, processed);
-        }
+            }        }
     }
-    
-    // Remove brackets and their contents if they seem to be release info
+      // Remove brackets and their contents if they seem to be release info
     let bracket_patterns = [
         (r"\[.*?\]", "square brackets"),
         (r"\(.*?\)", "parentheses"),
     ];
     
-    for (_, desc) in &bracket_patterns {
-        let original = processed.clone();
+    for (_, _) in &bracket_patterns {
         // Simple bracket removal - replace with space
         processed = processed.chars().collect::<Vec<char>>()
             .iter()
@@ -82,20 +71,13 @@ pub fn process_filename(filename: &str) -> String {
                         }
                         (result, depth, in_brackets)
                     }
-                }
-            }).0;
-            
-        if processed != original {
-            println!("Debug: Removed {}, now: '{}'", desc, processed);
-        }
+                }            }).0;
     }
-    
-    // Replace common separators with spaces
+      // Replace common separators with spaces
     let separators = [".", "_", "-", "+"];
     for sep in &separators {
         if processed.contains(sep) {
             processed = processed.replace(sep, " ");
-            println!("Debug: Replaced '{}' with spaces, now: '{}'", sep, processed);
         }
     }
     
@@ -120,10 +102,7 @@ pub fn process_filename(filename: &str) -> String {
             chars.into_iter().collect()
         })
         .collect();
-    
-    processed = words.join(" ");
-    
-    println!("Debug: Final result: '{}'", processed);
+      processed = words.join(" ");
     
     processed
 }
@@ -240,61 +219,49 @@ impl RenameOperation {
 
 /// Rename a single file by processing its filename
 pub fn rename_file(file_path: &str) -> bool {
-    println!("File path: {}", file_path);
-    
     let path = Path::new(file_path);
-    
-    if !path.exists() {
-        println!("✗ Error: File '{}' not found!", file_path);
+      if !path.exists() {
+        println!("Error: File '{}' not found!", file_path);
         return false;
     }
 
     if !path.is_file() {
-        println!("✗ Error: '{}' is not a file!", file_path);
+        println!("Error: '{}' is not a file!", file_path);
         return false;
-    }
-
-    let mut rename_op = RenameOperation::new(file_path);
+    }    let mut rename_op = RenameOperation::new(file_path);
     
     // Get the original filename without extension
     let original_name = rename_op.get_name_without_extension();
-    println!("Original name: {}", original_name);
     
     // Generate new name by processing the original name
     let new_name = process_filename(original_name);
-    println!("Processed name: {}", new_name);
-    
-    // If the name doesn't change, skip renaming
+      // If the name doesn't change, skip renaming
     if new_name == original_name {
-        println!("ℹ No changes needed for: {}", rename_op.get_original_name());
+        println!("No changes needed for: {}", rename_op.get_original_name());
         return true; // Consider this a success since no action was needed
-    }
-    
-    // Update the rename operation with the new name
+    }    // Update the rename operation with the new name
     rename_op.update_new_name(new_name);
-    
-    println!("Renaming: {} -> {}", rename_op.get_original_name(), rename_op.get_new_name());
     
     // Execute the rename
     match rename_op.execute() {
         RenameResult::Success(_) => {
-            println!("✓ Successfully renamed to: {}", rename_op.get_new_name());
+            println!("Successfully renamed to: {}", rename_op.get_new_name());
             true
         }
         RenameResult::AlreadyExists => {
-            println!("✗ Error: Target file '{}' already exists!", rename_op.get_new_name());
+            println!("Error: Target file '{}' already exists!", rename_op.get_new_name());
             false
         }
         RenameResult::NoPermission => {
-            println!("✗ Error: No permission to rename '{}'!", file_path);
+            println!("Error: No permission to rename '{}'!", file_path);
             false
         }
         RenameResult::SourceNotFound => {
-            println!("✗ Error: Source file '{}' not found!", file_path);
+            println!("Error: Source file '{}' not found!", file_path);
             false
         }
         RenameResult::OtherError(msg) => {
-            println!("✗ Error renaming '{}': {}", file_path, msg);
+            println!("Error renaming '{}': {}", file_path, msg);
             false
         }
     }
