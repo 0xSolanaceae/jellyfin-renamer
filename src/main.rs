@@ -3,11 +3,12 @@ use std::io;
 
 mod rename_engine;
 mod instance_coordinator;
+mod tui;
 
-use rename_engine::rename_file;
 use instance_coordinator::InstanceCoordinator;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     
     if args.len() < 2 {
@@ -16,7 +17,7 @@ fn main() {
         println!("Usage: {} <file_path> [additional_files...]", args[0]);
         println!("\nNo files provided to rename.");
         pause_and_exit();
-        return;
+        return Ok(());
     }
 
     // Try to collect files from multiple instances
@@ -25,42 +26,21 @@ fn main() {
     
     // If we're not the first instance, exit silently
     if collected_files.is_none() {
-        return;
+        return Ok(());
     }
     
     let collected_files = collected_files.unwrap();
-      println!("Jellyfin Rename Tool");
-    println!("===================");
     
     let file_paths = if collected_files.len() > 1 {
         collected_files
     } else {
         args[1..].to_vec()
     };
-    
-    println!("Processing {} file(s)...\n", file_paths.len());    let mut success_count = 0;
-    let mut total_count = 0;
-    
-    // Process each file
-    for file_path in &file_paths {
-        total_count += 1;
-        if rename_file(file_path) {
-            success_count += 1;
-        }
-    }
-    
-    // Summary
-    println!("===================");
-    println!("Summary: {} of {} files processed successfully", success_count, total_count);
-      if success_count == total_count && total_count > 0 {
-        println!("All files renamed successfully!");
-    } else if success_count > 0 {
-        println!("Some files were renamed, but there were errors with others.");
-    } else {
-        println!("No files were renamed.");
-    }
-    
-    pause_and_exit();
+
+    // Launch the beautiful TUI
+    tui::run_tui(file_paths).await?;
+
+    Ok(())
 }
 
 fn pause_and_exit() {
