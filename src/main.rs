@@ -3,26 +3,47 @@ use std::path::Path;
 use std::io;
 
 mod rename_engine;
+mod instance_coordinator;
 
 use rename_engine::{RenameOperation, RenameResult};
+use instance_coordinator::InstanceCoordinator;
 
 fn main() {
-    println!("Jellyfin Rename Tool");
-    println!("===================");
-    
     let args: Vec<String> = env::args().collect();
     
-    // Log the arguments for debugging
-    println!("Arguments received: {:?}", args);
-    
     if args.len() < 2 {
+        println!("Jellyfin Rename Tool");
+        println!("===================");
         println!("Usage: {} <file_path> [additional_files...]", args[0]);
         println!("\nNo files provided to rename.");
         pause_and_exit();
         return;
     }
+
+    // Try to collect files from multiple instances
+    let coordinator = InstanceCoordinator::new();
+    let collected_files = coordinator.collect_files_from_instances(&args[1]);
     
-    let file_paths: Vec<String> = args[1..].to_vec();
+    // If we're not the first instance, exit silently
+    if collected_files.is_none() {
+        return;
+    }
+    
+    let collected_files = collected_files.unwrap();
+    
+    println!("Jellyfin Rename Tool");
+    println!("===================");
+    
+    // Log the arguments for debugging
+    println!("Arguments received: {:?}", args);
+    println!("Collected files: {:?}", collected_files);
+    
+    let file_paths = if collected_files.len() > 1 {
+        collected_files
+    } else {
+        args[1..].to_vec()
+    };
+    
     println!("Processing {} file(s)...\n", file_paths.len());
     
     let mut success_count = 0;
@@ -163,15 +184,13 @@ fn process_filename(filename: &str) -> String {
         if processed.len() != original_len {
             println!("Debug: Removed '{}', now: '{}'", pattern, processed);
         }
-    }
-    
-    // Remove brackets and their contents if they seem to be release info
+    }    // Remove brackets and their contents if they seem to be release info
     let bracket_patterns = [
         (r"\[.*?\]", "square brackets"),
         (r"\(.*?\)", "parentheses"),
     ];
     
-    for (pattern, desc) in &bracket_patterns {
+    for (_, desc) in &bracket_patterns {
         let original = processed.clone();
         // Simple bracket removal - replace with space
         processed = processed.chars().collect::<Vec<char>>()
