@@ -1,360 +1,329 @@
-use eframe::egui;
-use egui::{Color32, Stroke, Vec2, FontId, Align, Layout, RichText};
+use std::io::{self, stdout, Stdout};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    Frame, Terminal,
+};
 use crate::rename_engine::{RenameOperation, RenameResult};
-use std::sync::{Arc, Mutex};
 
-// Modern theme colors
-struct ModernTheme {
-    bg_main: Color32,
-    bg_panel: Color32,
-    bg_highlight: Color32,
-    text_primary: Color32,
-    text_secondary: Color32,
-    accent: Color32,
-    success: Color32,
-    cancel: Color32,
-    border: Color32,
-    shadow: Color32,
-}
+type Tui = Terminal<CrosstermBackend<Stdout>>;
 
-impl Default for ModernTheme {
-    fn default() -> Self {
-        Self {
-            bg_main: Color32::from_rgb(26, 32, 44),      // Dark background
-            bg_panel: Color32::from_rgb(34, 41, 57),     // Panel background
-            bg_highlight: Color32::from_rgb(45, 55, 72), // Highlight background
-            text_primary: Color32::from_rgb(237, 242, 247), // Primary text
-            text_secondary: Color32::from_rgb(160, 174, 192), // Secondary text
-            accent: Color32::from_rgb(66, 153, 225),    // Accent blue
-            success: Color32::from_rgb(72, 187, 120),   // Success green
-            cancel: Color32::from_rgb(229, 62, 62),     // Cancel red
-            border: Color32::from_rgb(74, 85, 104),     // Border color
-            shadow: Color32::from_rgb(0, 0, 0).gamma_multiply(0.25),    // Shadow with alpha
-        }
-    }
-}
-
-pub struct RenameConfirmationApp {
+struct App {
     rename_op: RenameOperation,
-    name_buffer: String,    // Buffer for editing the name
-    theme: ModernTheme,
+    input: String,
+    input_mode: InputMode,
     confirmed: Option<bool>,
-    animation_time: f32,
-    prev_frame_time: f64,
+    show_preview: bool,
 }
 
-impl RenameConfirmationApp {
-    pub fn new(file_path: &str) -> Self {
-        // Create a rename operation
+#[derive(Clone, Copy)]
+enum InputMode {
+    Normal,
+    Editing,
+}
+
+impl App {    fn new(file_path: &str) -> Self {
         let rename_op = RenameOperation::new(file_path);
-        
-        // Initialize the edit buffer with the name without extension
-        let name_buffer = rename_op.get_name_without_extension().to_string();
+        let input = rename_op.get_name_without_extension().to_string();
         
         Self {
             rename_op,
-            name_buffer,
-            theme: ModernTheme::default(),
+            input,
+            input_mode: InputMode::Editing,
             confirmed: None,
-            animation_time: 0.0,
-            prev_frame_time: 0.0,
+            show_preview: true,
         }
     }
-    
-    // Get the rename operation result when confirmed
-    pub fn get_rename_result(&mut self) -> Option<RenameResult> {
-        if self.confirmed == Some(true) {
-            Some(self.rename_op.execute())
-        } else {
-            None
-        }
-    }
-    
-    // Get the new name when confirmed
-    pub fn get_new_name(&self) -> Option<String> {
-        if self.confirmed == Some(true) {
-            Some(self.name_buffer.clone())
-        } else {
-            None
-        }
+
+    fn update_rename_op(&mut self) {
+        self.rename_op.update_new_name(self.input.clone());
     }
 }
 
-impl eframe::App for RenameConfirmationApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Update animation time
-        let current_time = ctx.input(|i| i.time);
-        let delta_time = if self.prev_frame_time > 0.0 {
-            (current_time - self.prev_frame_time) as f32
-        } else {
-            0.0
-        };
-        self.prev_frame_time = current_time;
-        self.animation_time += delta_time;
-        
-        // Handle key events
-        ctx.input_mut(|input| {
-            if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
-                self.confirmed = Some(false);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            
-            if input.consume_key(egui::Modifiers::CTRL, egui::Key::Enter) {
-                // Update rename_op with the current buffer name before confirming
-                self.rename_op.update_new_name(self.name_buffer.clone());
-                self.confirmed = Some(true);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
-        
-        let theme = &self.theme;
-        
-        // Set up the visual style
-        let visuals = egui::Visuals {
-            window_fill: theme.bg_main,
-            panel_fill: theme.bg_main,
-            faint_bg_color: theme.bg_panel,
-            widgets: egui::style::Widgets::dark(),
-            window_shadow: egui::epaint::Shadow {
-                offset: [0, 4],
-                blur: 8,
-                spread: 0,
-                color: theme.shadow,
-            },
-            ..Default::default()
-        };
-        ctx.set_visuals(visuals);
-        
-        // Request a repaint for smooth animations
-        ctx.request_repaint();
-        
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Set default text color
-            ui.visuals_mut().override_text_color = Some(theme.text_primary);
-            
-            // Main container with some padding
-            egui::Frame::new()
-                .inner_margin(20.0)
-                .show(ui, |ui| {
-                    ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                        // Header with slight animation
-                        let title_size = 28.0 + (self.animation_time.sin() * 0.5);
-                        
-                        // Logo and title with animation
-                        ui.add_space(10.0);
-                        let title = RichText::new("Jellyfin Rename")
-                            .size(title_size)
-                            .color(theme.accent)
-                            .strong();
-                        ui.heading(title);
-                        
-                        // Subtitle
-                        ui.add_space(4.0);
-                        ui.label(RichText::new("Rename your media files")
-                            .color(theme.text_secondary)
-                            .size(16.0));
-                        
-                        ui.add_space(24.0);
-                        
-                        // Card container for content
-                        egui::Frame::new()
-                            .fill(theme.bg_panel)
-                            .corner_radius(12.0)
-                            .stroke(Stroke::new(1.0, theme.border))
-                            .shadow(egui::epaint::Shadow {
-                                offset: [0, 2],
-                                blur: 8,
-                                spread: 0,
-                                color: theme.shadow,
-                            })
-                            .inner_margin(24.0)
-                            .outer_margin(8.0)
-                            .show(ui, |ui| {
-                                // File info layout
-                                ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-                                    // Original filename section
-                                    ui.label(RichText::new("Original filename")
-                                        .color(theme.text_secondary)
-                                        .size(14.0));
-                                    ui.add_space(4.0);
-                                    
-                                    // Original filename box
-                                    egui::Frame::new()
-                                        .fill(theme.bg_highlight)
-                                        .corner_radius(8.0)
-                                        .inner_margin(12.0)
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(self.rename_op.get_original_name())
-                                                .color(theme.text_primary)
-                                                .size(15.0)
-                                                .monospace());
-                                        });
-                                    
-                                    ui.add_space(16.0);
-                                    
-                                    // New filename section with editable text field
-                                    ui.label(RichText::new("New filename")
-                                        .color(theme.text_secondary)
-                                        .size(14.0));
-                                    ui.add_space(4.0);
-                                    
-                                    // Combine text field and extension display
-                                    ui.horizontal(|ui| {
-                                        // Create a text field with custom styling
-                                        let text_edit = egui::TextEdit::singleline(&mut self.name_buffer)
-                                            .font(FontId::monospace(15.0))
-                                            .hint_text("Enter new filename")
-                                            .desired_width(ui.available_width() - 60.0)
-                                            .margin(egui::Vec2::new(10.0, 8.0));
-                                        
-                                        // Add the text field with custom styling
-                                        let response = ui.add_sized(
-                                            Vec2::new(ui.available_width() - 60.0, 36.0),
-                                            text_edit.background_color(theme.bg_highlight)
-                                        );
-                                        if response.changed() {
-                                            // Update the rename operation when text changes
-                                            self.rename_op.update_new_name(self.name_buffer.clone());
-                                        }
-                                        
-                                        // Auto-focus text field on start
-                                        if self.animation_time < 0.5 {
-                                            response.request_focus();
-                                        }
+fn init_terminal() -> io::Result<Tui> {
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    enable_raw_mode()?;
+    
+    let backend = CrosstermBackend::new(stdout());
+    let terminal = Terminal::new(backend)?;
+    
+    Ok(terminal)
+}
 
-                                        // Show extension as static text
-                                        ui.label(RichText::new(self.rename_op.get_extension())
-                                            .monospace()
-                                            .size(15.0)
-                                            .color(theme.text_secondary));
-                                    });
-                                    
-                                    // Preview of full new name
-                                    ui.add_space(8.0);                                    ui.label(
-                                        RichText::new(format!("Preview: {}", self.rename_op.get_new_name()))
-                                        .color(theme.text_secondary)
-                                        .size(12.0)
-                                    );
-                                    
-                                    ui.add_space(24.0);
-                                    
-                                    // Buttons with improved styling
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        // Confirm button with hover effect
-                                        let success_button = egui::Button::new(
-                                            RichText::new("Rename (Ctrl+Enter)")
-                                                .color(Color32::WHITE)
-                                                .size(14.0)
-                                        )
-                                        .min_size(Vec2::new(180.0, 36.0))
-                                        .corner_radius(8.0)
-                                        .fill(theme.success)
-                                        .stroke(Stroke::NONE);
-                                        
-                                        if ui.add(success_button).clicked() {
-                                            // Update the name before confirming
-                                            self.rename_op.update_new_name(self.name_buffer.clone());
-                                            self.confirmed = Some(true);
-                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                        }
-                                        
-                                        ui.add_space(12.0);
-                                        
-                                        // Cancel button
-                                        let cancel_button = egui::Button::new(
-                                            RichText::new("Cancel (Esc)")
-                                                .color(theme.text_primary)
-                                                .size(14.0)
-                                        )
-                                        .min_size(Vec2::new(120.0, 36.0))
-                                        .corner_radius(8.0)
-                                        .fill(theme.bg_highlight)
-                                        .stroke(Stroke::new(1.0, theme.border));
-                                        
-                                        if ui.add(cancel_button).clicked() {
-                                            self.confirmed = Some(false);
-                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                        }
-                                    });
-                                });
-                            });
-                        
-                        // Footer with keyboard shortcuts
-                        ui.add_space(16.0);
-                        ui.label(RichText::new("Press Esc to cancel, Ctrl+Enter to confirm")
-                            .size(12.0)
-                            .color(theme.text_secondary));
-                    });
-                });
+fn restore_terminal() -> io::Result<()> {
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    Ok(())
+}
+
+fn run_app(terminal: &mut Tui, mut app: App) -> io::Result<App> {
+    loop {
+        terminal.draw(|f| ui(f, &mut app))?;
+
+        // Use blocking event read instead of polling to avoid duplicates
+        match event::read()? {
+            Event::Key(key) => {                // Only handle key press events, ignore key release to prevent duplicates
+                if key.kind == KeyEventKind::Press {
+                    match app.input_mode {
+                        InputMode::Normal => match key.code {
+                            KeyCode::Char('e') => {
+                                app.input_mode = InputMode::Editing;
+                            }
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                app.confirmed = Some(false);
+                                break;
+                            }
+                            KeyCode::Enter => {
+                                app.update_rename_op();
+                                app.confirmed = Some(true);
+                                break;
+                            }
+                            _ => {}
+                        },
+                        InputMode::Editing => match key.code {
+                            KeyCode::Enter => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.update_rename_op();
+                                    app.confirmed = Some(true);
+                                    break;
+                                } else {
+                                    app.input_mode = InputMode::Normal;
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                app.input.push(c);
+                                app.update_rename_op();
+                            }
+                            KeyCode::Backspace => {
+                                app.input.pop();
+                                app.update_rename_op();
+                            }
+                            KeyCode::Esc => {
+                                app.confirmed = Some(false);
+                                break;
+                            }
+                            KeyCode::Tab => {
+                                app.show_preview = !app.show_preview;
+                            }
+                            _ => {}
+                        },
+                    }
+                }
+            }
+            _ => {} // Ignore other events
+        }
+    }
+
+    Ok(app)
+}
+
+fn ui(f: &mut Frame, app: &mut App) {
+    let size = f.area();
+
+    // Create the main layout
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Title
+            Constraint::Min(10),    // Main content
+            Constraint::Length(3),  // Help
+        ])
+        .split(size);
+
+    // Title
+    let title = Paragraph::new("Jellyfin Rename Tool")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, chunks[0]);
+
+    // Main content area
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),  // Original filename
+            Constraint::Length(5),  // New filename input
+            Constraint::Length(3),  // Preview
+            Constraint::Min(3),     // Status/Instructions
+        ])
+        .margin(1)
+        .split(chunks[1]);
+
+    // Original filename
+    let original_filename = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Original: ", Style::default().fg(Color::Yellow)),
+            Span::raw(app.rename_op.get_original_name()),
+        ]),
+    ])
+    .block(Block::default().borders(Borders::ALL).title("Current File"))
+    .wrap(Wrap { trim: true });
+    f.render_widget(original_filename, main_chunks[0]);
+
+    // New filename input
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .title(match app.input_mode {
+            InputMode::Normal => "New Filename (Press 'e' to edit)",
+            InputMode::Editing => "New Filename (Editing - Esc to cancel, Enter to confirm, Ctrl+Enter to rename)",
         });
+
+    let input_style = match app.input_mode {
+        InputMode::Normal => Style::default(),
+        InputMode::Editing => Style::default().fg(Color::Yellow),
+    };    let input_text = vec![
+        Line::from(vec![
+            Span::styled(&app.input, input_style),
+            Span::raw(app.rename_op.get_extension()),
+        ]),
+    ];
+
+    let input_paragraph = Paragraph::new(input_text)
+        .style(input_style)
+        .block(input_block);
+    f.render_widget(input_paragraph, main_chunks[1]);
+
+    // Set cursor position when editing
+    if let InputMode::Editing = app.input_mode {
+        f.set_cursor_position((
+            main_chunks[1].x + app.input.len() as u16 + 1,
+            main_chunks[1].y + 1,
+        ));
+    }
+
+    // Preview
+    if app.show_preview {        let preview_text = vec![
+            Line::from(vec![
+                Span::styled("Preview: ", Style::default().fg(Color::Green)),
+                Span::raw(app.rename_op.get_new_name()),
+            ]),
+        ];
+        let preview = Paragraph::new(preview_text)
+            .block(Block::default().borders(Borders::ALL).title("Preview"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(preview, main_chunks[2]);
+    }
+
+    // Help text
+    let help_text = match app.input_mode {
+        InputMode::Normal => {
+            "Press 'e' to edit, Enter to rename, 'q' or Esc to cancel, Tab to toggle preview"
+        }
+        InputMode::Editing => {
+            "Type to edit filename, Enter to stop editing, Ctrl+Enter to rename, Esc to cancel"
+        }
+    };
+
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(help, chunks[2]);
+
+    // Show a popup if there's a status message
+    if let Some(confirmed) = app.confirmed {
+        let popup_area = centered_rect(60, 20, size);
+        f.render_widget(Clear, popup_area);
+        
+        let message = if confirmed { "Renaming..." } else { "Cancelled" };
+        let color = if confirmed { Color::Green } else { Color::Red };
+        
+        let popup = Paragraph::new(message)
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Status"));
+        f.render_widget(popup, popup_area);
     }
 }
 
-// Main function to show the dialog and perform rename if confirmed
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 pub fn show_rename_dialog(file_path: &str) -> bool {
-    // Shared state for confirmation and new name
-    let app_state = Arc::new(Mutex::new(None));
-    let app_state_clone = app_state.clone();
+    // Initialize terminal
+    let mut terminal = match init_terminal() {
+        Ok(terminal) => terminal,
+        Err(e) => {
+            eprintln!("Failed to initialize terminal: {}", e);
+            return false;
+        }
+    };
 
-    let app = RenameConfirmationAppWithCallback::new(file_path, Box::new(move |result, rename_op| {
-        if result {
-            // If confirmed, execute the rename operation
+    // Create app and run it
+    let app = App::new(file_path);
+    let result_app = match run_app(&mut terminal, app) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("Application error: {}", e);
+            let _ = restore_terminal();
+            return false;
+        }
+    };
+
+    // Restore terminal before processing result
+    if let Err(e) = restore_terminal() {
+        eprintln!("Failed to restore terminal: {}", e);
+    }
+
+    // Process the result
+    if let Some(confirmed) = result_app.confirmed {
+        if confirmed {
+            // Execute the rename operation
+            let mut rename_op = RenameOperation::new(file_path);
+            rename_op.update_new_name(result_app.input);
+            
             match rename_op.execute() {
                 RenameResult::Success(_) => {
-                    *app_state_clone.lock().unwrap() = Some(true);
-                },
-                _ => {
-                    // Failed to rename, treat as canceled
-                    *app_state_clone.lock().unwrap() = Some(false);
+                    println!("File renamed successfully!");
+                    true
+                }
+                RenameResult::AlreadyExists => {
+                    println!("Error: Target file already exists!");
+                    false
+                }
+                RenameResult::NoPermission => {
+                    println!("Error: No permission to rename file!");
+                    false
+                }
+                RenameResult::SourceNotFound => {
+                    println!("Error: Source file not found!");
+                    false
+                }
+                RenameResult::OtherError(msg) => {
+                    println!("Error: {}", msg);
+                    false
                 }
             }
         } else {
-            // User canceled
-            *app_state_clone.lock().unwrap() = Some(false);
+            println!("Rename cancelled.");
+            false
         }
-    }));
-
-    let mut native_options = eframe::NativeOptions::default();
-    native_options.viewport.inner_size = Some(egui::vec2(500.0, 420.0)); // Slightly larger
-    native_options.centered = true;
-    native_options.vsync = true;
-
-    // Run the app
-    let _ = eframe::run_native(
-        "Jellyfin Rename",
-        native_options,
-        Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(app))
-        }),
-    );
-
-    // Return the result of the operation
-    app_state.lock().unwrap().unwrap_or(false)
-}
-
-// Wrapper app that takes a callback for confirmation and the rename operation
-pub struct RenameConfirmationAppWithCallback {
-    inner: RenameConfirmationApp,
-    on_confirm: Box<dyn Fn(bool, &RenameOperation) + Send + Sync>,
-}
-
-impl RenameConfirmationAppWithCallback {
-    pub fn new(file_path: &str, on_confirm: Box<dyn Fn(bool, &RenameOperation) + Send + Sync>) -> Self {
-        Self {
-            inner: RenameConfirmationApp::new(file_path),
-            on_confirm,
-        }
-    }
-}
-
-impl eframe::App for RenameConfirmationAppWithCallback {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.inner.update(ctx, frame);
-        if let Some(confirmed) = self.inner.confirmed {
-            (self.on_confirm)(confirmed, &self.inner.rename_op);
-            // Prevent repeated callback
-            self.inner.confirmed = None;
-        }
+    } else {
+        false
     }
 }

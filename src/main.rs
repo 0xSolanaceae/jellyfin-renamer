@@ -1,7 +1,4 @@
-#![windows_subsystem = "windows"]
-
 use std::env;
-use std::path::Path;
 
 mod popup;
 mod rename_engine;
