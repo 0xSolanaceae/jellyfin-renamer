@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
@@ -17,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::rename_engine;
+use crate::rename_engine::{self, RenameConfig, RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory};
 
 #[derive(Debug, Clone)]
 pub struct FileItem {
@@ -26,6 +27,8 @@ pub struct FileItem {
     pub new_name: String,
     pub status: ProcessingStatus,
     pub error_message: Option<String>,
+    pub episode_number: u32,
+    pub episode_title: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,10 +49,31 @@ pub struct App {
     pub processing_progress: f64,
     pub show_help: bool,
     pub show_preview: bool,
+    pub show_config: bool,
+    pub config_input_mode: ConfigInputMode,
+    pub config_input: String,
     pub scroll_state: ScrollbarState,
     pub start_time: Option<Instant>,
     pub finished: bool,
     pub stats: ProcessingStats,
+    pub config: Option<RenameConfig>,
+    pub rename_engine: Option<RenameEngine>,
+    pub directory_input: String,
+    pub season_input: String,
+    pub year_input: String,
+    pub imdb_id_input: String,
+    pub use_imdb: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ConfigInputMode {
+    Directory,
+    Season,
+    Year,
+    ImdbChoice,
+    ImdbId,
+    Confirm,
+    None,
 }
 
 #[derive(Debug, Default)]
@@ -62,50 +86,149 @@ pub struct ProcessingStats {
 }
 
 impl App {
-    pub fn new(file_paths: Vec<String>) -> Self {
-        let mut files = Vec::new();
-        
-        for path in file_paths {
-            let original_name = std::path::Path::new(&path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-            
-            let new_name = rename_engine::process_filename(&original_name);
-            
-            files.push(FileItem {
-                original_path: path,
-                original_name: original_name.clone(),
-                new_name,
-                status: ProcessingStatus::Pending,
-                error_message: None,
-            });
-        }
-
+    pub fn new() -> Self {
         let mut list_state = ListState::default();
-        if !files.is_empty() {
-            list_state.select(Some(0));
-        }
-
-        let stats = ProcessingStats {
-            total: files.len(),
-            ..Default::default()
-        };
+        list_state.select(Some(0));
 
         Self {
-            files,
+            files: Vec::new(),
             selected_index: 0,
             list_state,
             current_processing: None,
             processing_progress: 0.0,
             show_help: false,
             show_preview: true,
+            show_config: true,
+            config_input_mode: ConfigInputMode::Directory,
+            config_input: String::new(),
             scroll_state: ScrollbarState::default(),
             start_time: None,
             finished: false,
-            stats,
+            stats: ProcessingStats::default(),
+            config: None,
+            rename_engine: None,
+            directory_input: String::new(),
+            season_input: String::new(),
+            year_input: String::new(),
+            imdb_id_input: String::new(),
+            use_imdb: false,
         }
+    }
+
+    pub fn with_directory(directory: String) -> Self {
+        let mut app = Self::new();
+        app.directory_input = directory.clone();
+        
+        // Try to auto-detect season from directory name
+        if let Some(dir_path) = std::path::Path::new(&directory).file_name() {
+            if let Some(dir_name) = dir_path.to_str() {
+                if let Some(season_num) = extract_season_from_directory(dir_name) {
+                    app.season_input = format!("S{:02}", season_num);
+                }
+            }
+        }
+        
+        app
+    }
+
+    pub fn with_selected_files(selected_files: Vec<String>) -> Self {
+        let mut app = Self::new();
+        
+        // Convert selected file paths to FileItems
+        let mut files = Vec::new();
+        let mut directory = None;
+        
+        for file_path in selected_files {
+            let path = std::path::Path::new(&file_path);
+            if path.is_file() {
+                // Get directory from first file
+                if directory.is_none() {
+                    directory = path.parent().map(|p| p.to_string_lossy().to_string());
+                }
+                
+                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    files.push(FileItem {
+                        original_path: file_path.clone(),
+                        original_name: filename.to_string(),
+                        new_name: filename.to_string(), // Will be updated during processing
+                        status: ProcessingStatus::Pending,
+                        error_message: None,
+                        episode_number: 0, // Will be detected during processing
+                        episode_title: String::new(),
+                    });
+                }
+            }
+        }
+        
+        app.files = files;
+        app.stats.total = app.files.len();
+        
+        // Set directory input from the first file's directory
+        if let Some(dir) = directory {
+            app.directory_input = dir.clone();
+            
+            // Try to auto-detect season from directory name
+            if let Some(dir_path) = std::path::Path::new(&dir).file_name() {
+                if let Some(dir_name) = dir_path.to_str() {
+                    if let Some(season_num) = extract_season_from_directory(dir_name) {
+                        app.season_input = format!("S{:02}", season_num);
+                    }
+                }
+            }
+        }
+        
+        // Skip directory configuration if we have pre-selected files
+        if !app.files.is_empty() {
+            app.config_input_mode = ConfigInputMode::Season;
+        }
+        
+        app
+    }
+
+    pub async fn scan_directory(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(engine) = &self.rename_engine {
+            let file_renames = engine.scan_directory()?;
+            
+            self.files = file_renames.into_iter().map(|fr| FileItem {
+                original_path: fr.original_path.to_string_lossy().to_string(),
+                original_name: fr.original_name.clone(),
+                new_name: fr.new_name.clone(),
+                status: ProcessingStatus::Pending,
+                error_message: None,
+                episode_number: fr.episode_number,
+                episode_title: fr.episode_title.clone(),
+            }).collect();
+
+            self.stats = ProcessingStats {
+                total: self.files.len(),
+                ..Default::default()
+            };
+
+            if !self.files.is_empty() {
+                self.list_state.select(Some(0));
+                self.show_config = false;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn create_rename_engine(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let config = ConfigBuilder::new()
+            .directory(&self.directory_input)
+            .season(self.season_input.clone())
+            .year(if self.year_input.is_empty() { None } else { Some(self.year_input.clone()) })
+            .imdb(if self.use_imdb && !self.imdb_id_input.is_empty() { 
+                Some(self.imdb_id_input.clone()) 
+            } else { 
+                None 
+            })
+            .build()?;
+
+        let mut engine = RenameEngine::new(config)?;
+        engine.fetch_imdb_titles().await?;
+        
+        self.rename_engine = Some(engine);
+        Ok(())
     }
 
     pub fn next(&mut self) {
@@ -150,42 +273,161 @@ impl App {
 
     pub fn toggle_preview(&mut self) {
         self.show_preview = !self.show_preview;
-    }    pub async fn process_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.start_time = Some(Instant::now());
-        let total_files = self.files.len();
-        
-        for index in 0..total_files {
-            self.current_processing = Some(index);
-            self.files[index].status = ProcessingStatus::Processing;
-            self.processing_progress = (index as f64) / (total_files as f64);
+    }
 
-            // Simulate processing time for demo purposes
-            tokio::time::sleep(Duration::from_millis(500)).await;
-
-            // Actually process the file
-            let file_path = self.files[index].original_path.clone();
-            let success = rename_engine::rename_file(&file_path);
-            
-            if success {
-                self.files[index].status = ProcessingStatus::Success;
-                self.stats.successful += 1;
-            } else {
-                self.files[index].status = ProcessingStatus::Error;
-                self.files[index].error_message = Some("Failed to rename file".to_string());
-                self.stats.failed += 1;
+    pub fn handle_config_input(&mut self, c: char) {
+        match self.config_input_mode {
+            ConfigInputMode::Directory => {
+                if c == '\n' || c == '\r' {
+                    self.advance_config_step();
+                } else if c == '\x08' { // Backspace
+                    self.directory_input.pop();
+                } else {
+                    self.directory_input.push(c);
+                }
             }
-            
-            self.stats.processed += 1;
+            ConfigInputMode::Season => {
+                if c == '\n' || c == '\r' {
+                    self.advance_config_step();
+                } else if c == '\x08' {
+                    self.season_input.pop();
+                } else {
+                    self.season_input.push(c);
+                }
+            }
+            ConfigInputMode::Year => {
+                if c == '\n' || c == '\r' {
+                    self.advance_config_step();
+                } else if c == '\x08' {
+                    self.year_input.pop();
+                } else {
+                    self.year_input.push(c);
+                }
+            }
+            ConfigInputMode::ImdbChoice => {
+                if c == 'y' || c == 'Y' {
+                    self.use_imdb = true;
+                    self.advance_config_step();
+                } else if c == 'n' || c == 'N' {
+                    self.use_imdb = false;
+                    self.advance_config_step();
+                }
+            }
+            ConfigInputMode::ImdbId => {
+                if c == '\n' || c == '\r' {
+                    self.advance_config_step();
+                } else if c == '\x08' {
+                    self.imdb_id_input.pop();
+                } else {
+                    self.imdb_id_input.push(c);
+                }
+            }
+            _ => {}
         }
+    }
 
-        self.current_processing = None;
-        self.processing_progress = 1.0;
-        self.finished = true;
+    pub fn advance_config_step(&mut self) {
+        match self.config_input_mode {
+            ConfigInputMode::Directory => {
+                if !self.directory_input.is_empty() {
+                    self.config_input_mode = ConfigInputMode::Season;
+                }
+            }
+            ConfigInputMode::Season => {
+                if !self.season_input.is_empty() {
+                    self.config_input_mode = ConfigInputMode::Year;
+                }
+            }
+            ConfigInputMode::Year => {
+                self.config_input_mode = ConfigInputMode::ImdbChoice;
+            }
+            ConfigInputMode::ImdbChoice => {
+                if self.use_imdb {
+                    self.config_input_mode = ConfigInputMode::ImdbId;
+                } else {
+                    self.config_input_mode = ConfigInputMode::Confirm;
+                }
+            }
+            ConfigInputMode::ImdbId => {
+                self.config_input_mode = ConfigInputMode::Confirm;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn process_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(engine) = &self.rename_engine {
+            self.start_time = Some(Instant::now());
+            let total_files = self.files.len();
+            
+            for index in 0..total_files {
+                self.current_processing = Some(index);
+                self.files[index].status = ProcessingStatus::Processing;
+                self.processing_progress = (index as f64) / (total_files as f64);
+
+                // Create FileRename from FileItem
+                let file_rename = FileRename {
+                    original_path: PathBuf::from(&self.files[index].original_path),
+                    original_name: self.files[index].original_name.clone(),
+                    new_name: self.files[index].new_name.clone(),
+                    episode_number: self.files[index].episode_number,
+                    episode_title: self.files[index].episode_title.clone(),
+                };
+
+                let result = engine.rename_file(&file_rename).await;
+                
+                if result.success {
+                    self.files[index].status = ProcessingStatus::Success;
+                    self.stats.successful += 1;
+                } else {
+                    self.files[index].status = ProcessingStatus::Error;
+                    self.files[index].error_message = result.error_message;
+                    self.stats.failed += 1;
+                }
+                
+                self.stats.processed += 1;
+
+                // Small delay to show progress
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            self.current_processing = None;
+            self.processing_progress = 1.0;
+            self.finished = true;
+        }
+        Ok(())
+    }
+
+    pub async fn process_selected_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(engine) = &self.rename_engine {
+            // Process each pre-selected file
+            for file_item in &mut self.files {
+                let path = std::path::Path::new(&file_item.original_path);
+                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    // Try to process with standard pattern first
+                    if let Some(file_rename) = engine.process_file_standard(filename)? {
+                        file_item.new_name = file_rename.new_name;
+                        file_item.episode_number = file_rename.episode_number;
+                        file_item.episode_title = file_rename.episode_title;
+                    } else if let Some(file_rename) = engine.process_file_flexible(filename)? {
+                        file_item.new_name = file_rename.new_name;
+                        file_item.episode_number = file_rename.episode_number;
+                        file_item.episode_title = file_rename.episode_title;
+                    }
+                    // If no pattern matches, keep original name
+                }
+            }
+
+            if !self.files.is_empty() {
+                self.list_state.select(Some(0));
+                self.show_config = false;
+            }
+        }
         Ok(())
     }
 }
 
-pub async fn run_tui(file_paths: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_tui(directory: Option<String>, selected_files: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -194,7 +436,14 @@ pub async fn run_tui(file_paths: Vec<String>) -> Result<(), Box<dyn std::error::
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let mut app = App::new(file_paths);
+    let mut app = if !selected_files.is_empty() {
+        App::with_selected_files(selected_files)
+    } else if let Some(dir) = directory {
+        App::with_directory(dir)
+    } else {
+        App::new()
+    };
+    
     let res = run_app(&mut terminal, &mut app).await;
 
     // Restore terminal
@@ -229,19 +478,67 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('q') | KeyCode::Esc => {
                             if app.show_help {
                                 app.toggle_help();
+                            } else if app.show_config {
+                                return Ok(());
                             } else {
                                 return Ok(());
                             }
                         }
                         KeyCode::Char('h') => app.toggle_help(),
-                        KeyCode::Char('p') => app.toggle_preview(),
-                        KeyCode::Down | KeyCode::Char('j') => app.next(),
-                        KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                        KeyCode::Enter | KeyCode::Char(' ') => {
-                            if !processing && !app.finished {
+                        KeyCode::Char('p') => {
+                            if !app.show_config {
+                                app.toggle_preview();
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if !app.show_config {
+                                app.next();
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if !app.show_config {
+                                app.previous();
+                            }
+                        }
+                        KeyCode::Enter => {                            if app.show_config {
+                                if app.config_input_mode == ConfigInputMode::Confirm {
+                                    // Create engine
+                                    if let Err(_e) = app.create_rename_engine().await {
+                                        // Show error
+                                        continue;
+                                    }
+                                    
+                                    // Process files based on whether they were pre-selected or scanned
+                                    if !app.files.is_empty() {
+                                        // Files were pre-selected, process them
+                                        if let Err(_e) = app.process_selected_files().await {
+                                            // Show error
+                                            continue;
+                                        }
+                                    } else {
+                                        // Scan directory for files
+                                        if let Err(_e) = app.scan_directory().await {
+                                            // Show error
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    app.advance_config_step();
+                                }
+                            } else if !processing && !app.finished {
                                 processing = true;
                                 let _ = app.process_files().await;
                                 processing = false;
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            if app.show_config {
+                                app.handle_config_input(c);
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if app.show_config {
+                                app.handle_config_input('\x08');
                             }
                         }
                         _ => {}
@@ -251,7 +548,7 @@ async fn run_app<B: ratatui::backend::Backend>(
         }
 
         if app.finished {
-            // Keep showing the UI for a moment after completion
+            // Keep showing the UI after completion
         }
     }
 }
@@ -259,17 +556,211 @@ async fn run_app<B: ratatui::backend::Backend>(
 fn ui(f: &mut Frame, app: &App) {
     let size = f.size();
 
+    if app.show_config {
+        render_config_screen(f, size, app);
+    } else {
+        render_main_screen(f, size, app);
+    }
+
+    // Help popup (if enabled)
+    if app.show_help {
+        render_help_popup(f, app);
+    }
+}
+
+fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    // Header
+    let header = Paragraph::new("🔧 Jellyfin Rename Tool - Configuration")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White))
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+    f.render_widget(header, chunks[0]);
+
+    // Configuration form
+    let form_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ])
+        .split(chunks[1]);
+
+    // Directory input
+    let directory_style = if app.config_input_mode == ConfigInputMode::Directory {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    
+    let directory_input = Paragraph::new(app.directory_input.as_str())
+        .style(directory_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Directory Path")
+                .border_style(if app.config_input_mode == ConfigInputMode::Directory {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                }),
+        );
+    f.render_widget(directory_input, form_chunks[0]);
+
+    // Season input
+    let season_style = if app.config_input_mode == ConfigInputMode::Season {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    
+    let season_input = Paragraph::new(app.season_input.as_str())
+        .style(season_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Season (e.g., S01 or 1)")
+                .border_style(if app.config_input_mode == ConfigInputMode::Season {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                }),
+        );
+    f.render_widget(season_input, form_chunks[1]);
+
+    // Year input
+    let year_style = if app.config_input_mode == ConfigInputMode::Year {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    
+    let year_input = Paragraph::new(app.year_input.as_str())
+        .style(year_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Year (optional)")
+                .border_style(if app.config_input_mode == ConfigInputMode::Year {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                }),
+        );
+    f.render_widget(year_input, form_chunks[2]);
+
+    // IMDb choice
+    let imdb_text = if app.config_input_mode == ConfigInputMode::ImdbChoice {
+        "Press y for Yes, n for No"
+    } else if app.use_imdb {
+        "Yes"
+    } else {
+        "No"
+    };
+    
+    let imdb_choice = Paragraph::new(imdb_text)
+        .style(if app.config_input_mode == ConfigInputMode::ImdbChoice {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Use IMDb for episode titles?")
+                .border_style(if app.config_input_mode == ConfigInputMode::ImdbChoice {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Gray)
+                }),
+        );
+    f.render_widget(imdb_choice, form_chunks[3]);
+
+    // IMDb ID input (if needed)
+    if app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId {
+        let imdb_style = if app.config_input_mode == ConfigInputMode::ImdbId {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        
+        let imdb_input = Paragraph::new(app.imdb_id_input.as_str())
+            .style(imdb_style)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("IMDb ID (e.g., tt0944947)")
+                    .border_style(if app.config_input_mode == ConfigInputMode::ImdbId {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    }),
+            );
+        f.render_widget(imdb_input, form_chunks[4]);
+    }
+
+    // Confirm button
+    if app.config_input_mode == ConfigInputMode::Confirm {
+        let confirm = Paragraph::new("Press ENTER to scan directory and start")
+            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Ready to Scan")
+                    .border_style(Style::default().fg(Color::Green)),
+            );
+        f.render_widget(confirm, form_chunks[5]);
+    }
+
+    // Instructions
+    let instructions = match app.config_input_mode {
+        ConfigInputMode::Directory => "Enter the directory path containing your video files",
+        ConfigInputMode::Season => "Enter season number (auto-detected if possible)",
+        ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
+        ConfigInputMode::ImdbChoice => "Would you like to fetch episode titles from IMDb?",
+        ConfigInputMode::ImdbId => "Enter the IMDb series ID (found in the URL)",
+        ConfigInputMode::Confirm => "Review your settings and press Enter to continue",
+        ConfigInputMode::None => "",
+    };
+
+    let help_text = Paragraph::new(instructions)
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Instructions"));
+
+    f.render_widget(help_text, chunks[2]);
+}
+
+fn render_main_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     // Create main layout
     let chunks = if app.show_preview {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
-            .split(size)
+            .split(area)
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)].as_ref())
-            .split(size)
+            .split(area)
     };
 
     let left_chunks = Layout::default()
@@ -293,11 +784,6 @@ fn ui(f: &mut Frame, app: &App) {
     // Preview panel (if enabled)
     if app.show_preview && chunks.len() > 1 {
         render_preview_panel(f, chunks[1], app);
-    }
-
-    // Help popup (if enabled)
-    if app.show_help {
-        render_help_popup(f, app);
     }
 }
 
@@ -437,6 +923,9 @@ fn render_preview_panel(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     file.original_name.clone(),
                     Style::default().fg(Color::Red),
                 )),
+                Line::from(""),
+                Line::from(format!("Episode: {}", file.episode_number)),
+                Line::from(format!("Title: {}", file.episode_title)),
             ]))
             .block(
                 Block::default()
@@ -502,10 +991,12 @@ fn render_help_popup(f: &mut Frame, _app: &App) {
         Line::from("  q/Esc   - Quit application"),
         Line::from(""),
         Line::from("Features:"),
+        Line::from("• Fetches episode titles from IMDb"),
         Line::from("• Removes common torrent site tags"),
         Line::from("• Cleans up video quality indicators"),
         Line::from("• Removes codec information"),
         Line::from("• Preserves original file structure"),
+        Line::from("• Supports multiple filename patterns"),
         Line::from(""),
         Line::from(vec![
             Span::styled("Press Esc or h to close", Style::default().fg(Color::Gray))

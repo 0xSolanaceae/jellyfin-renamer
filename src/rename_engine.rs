@@ -1,288 +1,444 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::io;
+use anyhow::{Result, Context};
+use regex::Regex;
+use reqwest;
+use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 
-/// Processes a filename to remove unwanted patterns and improve readability
-pub fn process_filename(filename: &str) -> String {
-    let mut processed = filename.to_string();
-    
-    // Remove common unwanted patterns (case insensitive)
-    let patterns_to_remove = [
-        // Torrent sites and groups
-        "www.yts.mx", "YTS.MX", "yts.mx", "[YTS.MX]", "(YTS.MX)",
-        "YIFY", "yify", "[YIFY]", "(YIFY)",
-        "RARBG", "rarbg", "[RARBG]", "(RARBG)",
-        "1337x", "[1337x]", "(1337x)",
-        "TGx", "[TGx]", "(TGx)",
-        
-        // Video quality indicators
-        "1080p", "720p", "480p", "2160p", "4K", "HD", "HDTV",
-        "BluRay", "Blu-Ray", "BrRip", "BDRip", "DVDRip", "WEBRip", "WEB-DL",
-        "CAMRip", "TS", "TC", "SCREENER", "R5",
-        
-        // Video codecs
-        "x264", "x265", "H.264", "H.265", "HEVC", "AVC", "XviD", "DivX",
-        "VP9", "AV1",
-        
-        // Audio codecs
-        "AAC", "AC3", "DTS", "MP3", "FLAC", "Atmos", "DTS-HD",
-        
-        // Release info
-        "EXTENDED", "UNRATED", "DIRECTORS.CUT", "REMASTERED",
-        "LIMITED", "INTERNAL", "PROPER", "REPACK",
-    ];
-    
-    // Case insensitive pattern removal
-    for pattern in &patterns_to_remove {        let pattern_lower = pattern.to_lowercase();
-        
-        // Keep replacing until no more matches found
-        loop {
-            let processed_lower = processed.to_lowercase();
-            if let Some(pos) = processed_lower.find(&pattern_lower) {
-                processed = format!("{}{}", &processed[..pos], &processed[pos + pattern.len()..]);
-            } else {
-                break;
-            }        }
-    }
-      // Remove brackets and their contents if they seem to be release info
-    let bracket_patterns = [
-        (r"\[.*?\]", "square brackets"),
-        (r"\(.*?\)", "parentheses"),
-    ];
-    
-    for (_, _) in &bracket_patterns {
-        // Simple bracket removal - replace with space
-        processed = processed.chars().collect::<Vec<char>>()
-            .iter()
-            .fold((String::new(), 0, false), |(mut result, depth, in_brackets), &ch| {
-                match ch {
-                    '[' | '(' => {
-                        if depth == 0 { result.push(' '); }
-                        (result, depth + 1, true)
-                    },
-                    ']' | ')' => {
-                        let new_depth = if depth > 0 { depth - 1 } else { 0 };
-                        if new_depth == 0 { result.push(' '); }
-                        (result, new_depth, new_depth > 0)
-                    },
-                    _ => {
-                        if !in_brackets {
-                            result.push(ch);
-                        }
-                        (result, depth, in_brackets)
-                    }
-                }            }).0;
-    }
-      // Replace common separators with spaces
-    let separators = [".", "_", "-", "+"];
-    for sep in &separators {
-        if processed.contains(sep) {
-            processed = processed.replace(sep, " ");
-        }
-    }
-    
-    // Clean up multiple spaces and trim
-    while processed.contains("  ") {
-        processed = processed.replace("  ", " ");
-    }
-    
-    processed = processed.trim().to_string();
-    
-    // Remove leading/trailing dots, spaces, and other punctuation
-    processed = processed.trim_matches(&['.', ' ', '-', '_', '(', ')', '[', ']', ','] as &[char]).to_string();
-    
-    // Capitalize first letter of each word for better presentation
-    let words: Vec<String> = processed
-        .split_whitespace()
-        .map(|word| {
-            let mut chars: Vec<char> = word.chars().collect();
-            if !chars.is_empty() {
-                chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
-            }
-            chars.into_iter().collect()
-        })
-        .collect();
-      processed = words.join(" ");
-    
-    processed
+#[derive(Debug, Clone)]
+pub struct RenameConfig {
+    pub directory: PathBuf,
+    pub season: String,
+    pub season_num: u32,
+    pub year: Option<String>,
+    pub use_imdb: bool,
+    pub imdb_id: Option<String>,
 }
 
-/// Represents the result of a rename operation
+#[derive(Debug, Clone)]
+pub struct FileRename {
+    pub original_path: PathBuf,
+    pub original_name: String,
+    pub new_name: String,
+    pub episode_number: u32,
+    pub episode_title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenameResult {
+    pub file_rename: FileRename,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug)]
-pub enum RenameResult {
-    Success(PathBuf),    // Success with the new path
-    AlreadyExists,       // Target file already exists
-    NoPermission,        // No permission to rename
-    SourceNotFound,      // Source file not found
-    OtherError(String),  // Other error with message
+pub struct RenameEngine {
+    config: RenameConfig,
+    imdb_titles: Vec<String>,
+    standard_pattern: Regex,
+    flexible_pattern: Regex,
 }
 
-/// Represents a file to be renamed
-pub struct RenameOperation {
-    original_path: PathBuf,
-    new_name: String,
-    original_name: String,
-    extension: String,
-    name_without_extension: String,
-}
+impl RenameEngine {
+    pub fn new(config: RenameConfig) -> Result<Self> {
+        let standard_pattern = Regex::new(
+            r"(?i)(?P<title>.*?)S(?P<season>\d{1,2})E(?P<episode>\d{2})(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
+        )?;
+        
+        let flexible_pattern = Regex::new(
+            r"(?i)(?P<title>.*?)\b(?P<season>\d{1,2})x(?P<episode>\d{2})\b(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
+        )?;
 
-impl RenameOperation {
-    /// Create a new rename operation from a file path
-    pub fn new(file_path: &str) -> Self {
-        let path = Path::new(file_path);
-        let original_name = path.file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
-            
-        let extension = path.extension()
-            .map(|ext| format!(".{}", ext.to_string_lossy()))
-            .unwrap_or_default();
-            
-        let name_without_extension = path.file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .unwrap_or_default();
-            
-        // Default new name is the same as original
-        let new_name = original_name.clone();
-        
-        Self {
-            original_path: path.to_path_buf(),
-            original_name,
-            new_name,
-            extension,
-            name_without_extension,
+        Ok(Self {
+            config,
+            imdb_titles: Vec::new(),
+            standard_pattern,
+            flexible_pattern,
+        })
+    }
+
+    pub async fn fetch_imdb_titles(&mut self) -> Result<()> {
+        if !self.config.use_imdb {
+            return Ok(());
         }
-    }
-    
-    /// Update the new name (without extension)
-    pub fn update_new_name(&mut self, name: String) {
-        self.name_without_extension = name;
-        self.new_name = format!("{}{}", self.name_without_extension, self.extension);
-    }
-    
-    /// Get the original name with extension
-    pub fn get_original_name(&self) -> &str {
-        &self.original_name
-    }
-    
-    /// Get the new name with extension
-    pub fn get_new_name(&self) -> &str {
-        &self.new_name
-    }
-    
-    /// Get the extension (with dot)
-    pub fn get_extension(&self) -> &str {
-        &self.extension
-    }
-    
-    /// Get the name without extension that can be edited
-    pub fn get_name_without_extension(&self) -> &str {
-        &self.name_without_extension
-    }
-    
-    /// Get the original path
-    pub fn get_original_path(&self) -> &PathBuf {
-        &self.original_path
-    }
-    
-    /// Calculate the new full path
-    pub fn get_new_path(&self) -> PathBuf {
-        let parent = self.original_path.parent().unwrap_or(Path::new(""));
-        parent.join(&self.new_name)
-    }
-    
-    /// Execute the rename operation
-    pub fn execute(&self) -> RenameResult {
-        if self.original_name == self.new_name {
-            return RenameResult::Success(self.original_path.clone());
+
+        let imdb_id = self.config.imdb_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("IMDb ID is required when use_imdb is true"))?;
+
+        println!("Fetching episode titles for {} from IMDb...", self.config.season);
+        
+        let titles = scrape_imdb_episodes(imdb_id, Some(self.config.season_num)).await?;
+        
+        if titles.is_empty() {
+            println!("Could not fetch episode titles. Proceeding without IMDb titles.");
+        } else {
+            println!("Fetched {} episode titles.", titles.len());
+            self.imdb_titles = titles;
         }
-        
-        let new_path = self.get_new_path();
-        
-        if !self.original_path.exists() {
-            return RenameResult::SourceNotFound;
+
+        Ok(())
+    }
+
+    pub fn scan_directory(&self) -> Result<Vec<FileRename>> {
+        if !self.config.directory.exists() {
+            return Err(anyhow::anyhow!("Directory does not exist: {:?}", self.config.directory));
         }
-        
-        if new_path.exists() {
-            return RenameResult::AlreadyExists;
-        }
-        
-        match fs::rename(&self.original_path, &new_path) {
-            Ok(_) => RenameResult::Success(new_path),
-            Err(e) => match e.kind() {
-                io::ErrorKind::PermissionDenied => RenameResult::NoPermission,
-                io::ErrorKind::NotFound => RenameResult::SourceNotFound,
-                _ => RenameResult::OtherError(e.to_string()),
+
+        let files: Vec<_> = fs::read_dir(&self.config.directory)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+
+        let mut proposed_renames = Vec::new();
+        let mut files_for_flexible = Vec::new();
+
+        // Try standard pattern first
+        for filename in &files {
+            if let Some(rename) = self.process_file_standard(filename)? {
+                if rename.original_name != rename.new_name {
+                    proposed_renames.push(rename);
+                }
+            } else {
+                files_for_flexible.push(filename.clone());
             }
-        }    }
-}
+        }
 
-/// Rename a single file by processing its filename
-pub fn rename_file(file_path: &str) -> bool {
-    let path = Path::new(file_path);
-      if !path.exists() {
-        println!("Error: File '{}' not found!", file_path);
-        return false;
+        // If no matches with standard pattern, try flexible pattern
+        if proposed_renames.is_empty() && !files_for_flexible.is_empty() {
+            println!("No files matched standard pattern, trying flexible pattern...");
+            
+            for filename in &files_for_flexible {
+                if let Some(rename) = self.process_file_flexible(filename)? {
+                    if rename.original_name != rename.new_name {
+                        proposed_renames.push(rename);
+                    }
+                }
+            }
+        }
+
+        Ok(proposed_renames)
     }
 
-    if !path.is_file() {
-        println!("Error: '{}' is not a file!", file_path);
-        return false;
-    }    let mut rename_op = RenameOperation::new(file_path);
+    pub fn process_file_standard(&self, filename: &str) -> Result<Option<FileRename>> {
+        if let Some(captures) = self.standard_pattern.captures(filename) {
+            let episode_number: u32 = captures.name("episode")
+                .unwrap()
+                .as_str()
+                .parse()?;
+            
+            let season_number: u32 = captures.name("season")
+                .unwrap()
+                .as_str()
+                .parse()?;
+            
+            let suffix = captures.name("suffix").unwrap().as_str();
+            let extension = captures.name("extension").unwrap().as_str();
+
+            let episode_title = if !self.imdb_titles.is_empty() && episode_number <= self.imdb_titles.len() as u32 {
+                self.imdb_titles[(episode_number - 1) as usize].clone()
+            } else {
+                self.extract_episode_title_from_suffix(suffix)
+            };
+
+            let sanitized_title = sanitize_filename(&episode_title.replace(' ', "_"));
+            let season_episode = format!("S{:02}E{:02}", season_number, episode_number);
+            let new_name = format!("{}_({}).{}", sanitized_title, season_episode, extension);
+
+            let original_path = self.config.directory.join(filename);
+            
+            return Ok(Some(FileRename {
+                original_path,
+                original_name: filename.to_string(),
+                new_name,
+                episode_number,
+                episode_title,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    pub fn process_file_flexible(&self, filename: &str) -> Result<Option<FileRename>> {
+        if let Some(captures) = self.flexible_pattern.captures(filename) {
+            let episode_number: u32 = captures.name("episode")
+                .unwrap()
+                .as_str()
+                .parse()?;
+            
+            let title = captures.name("title").unwrap().as_str();
+            let extension = captures.name("extension").unwrap().as_str();
+
+            let episode_title = if !self.imdb_titles.is_empty() && episode_number <= self.imdb_titles.len() as u32 {
+                self.imdb_titles[(episode_number - 1) as usize].clone()
+            } else {
+                title.replace('.', "_")
+            };
+
+            let sanitized_title = sanitize_filename(&episode_title.replace(' ', "_"));
+            let year_part = self.config.year.as_ref()
+                .map(|y| format!("({})", y))
+                .unwrap_or_default();
+            
+            let new_name = format!("{}_{}{}.{}", 
+                sanitized_title, 
+                self.config.season, 
+                year_part, 
+                extension
+            );
+
+            let original_path = self.config.directory.join(filename);
+            
+            return Ok(Some(FileRename {
+                original_path,
+                original_name: filename.to_string(),
+                new_name,
+                episode_number,
+                episode_title,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
+        let title_parts: Vec<&str> = suffix.split('.').collect();
+        let mut meaningful_parts = Vec::new();
+        
+        for part in title_parts {
+            let part_lower = part.to_lowercase();
+            if part_lower.contains("1080p") || 
+               part_lower.contains("720p") || 
+               part_lower.contains("bluray") || 
+               part_lower.contains("x264") || 
+               part_lower.contains("x265") || 
+               part_lower.contains("web-dl") || 
+               part_lower.contains("webrip") {
+                break;
+            }
+            if !part.is_empty() {
+                meaningful_parts.push(part);
+            }
+        }
+        
+        meaningful_parts.join(" ")
+    }
+
+    pub async fn rename_file(&self, file_rename: &FileRename) -> RenameResult {
+        let new_path = self.config.directory.join(&file_rename.new_name);
+        
+        match fs::rename(&file_rename.original_path, &new_path) {
+            Ok(_) => RenameResult {
+                file_rename: file_rename.clone(),
+                success: true,
+                error_message: None,
+            },
+            Err(e) => RenameResult {
+                file_rename: file_rename.clone(),
+                success: false,
+                error_message: Some(e.to_string()),
+            }
+        }
+    }
+
+    pub async fn rename_files(&self, files: &[FileRename]) -> Vec<RenameResult> {
+        let mut results = Vec::new();
+        
+        for file in files {
+            let result = self.rename_file(file).await;
+            results.push(result);
+        }
+        
+        results
+    }
+}
+
+// Helper function to sanitize filenames
+pub fn sanitize_filename(filename: &str) -> String {
+    let re = Regex::new(r#"[<>:"/\\|?*]"#).unwrap();
+    re.replace_all(filename, "_").to_string()
+}
+
+// Helper function to extract season number from directory name
+pub fn extract_season_from_directory(dir_name: &str) -> Option<u32> {
+    let re = Regex::new(r"s(\d+)").unwrap();
+    if let Some(captures) = re.captures(&dir_name.to_lowercase()) {
+        captures.get(1)?.as_str().parse().ok()
+    } else {
+        None
+    }
+}
+
+// IMDb scraping functionality
+pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<Vec<String>> {
+    let mut url = format!("https://www.imdb.com/title/{}/episodes", imdb_id);
+    if let Some(season_num) = season {
+        url.push_str(&format!("?season={}", season_num));
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0")
+        .send()
+        .await
+        .context("Failed to fetch IMDb page")?;
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
+    }
+
+    let html = response.text().await?;
+    let document = Html::parse_document(&html);
     
-    // Get the original filename without extension
-    let original_name = rename_op.get_name_without_extension();
+    // Try multiple selectors as IMDb's structure can vary
+    let selectors = [
+        "div.ipc-title.ipc-title--base.ipc-title--title .ipc-title__text",
+        ".titleColumn a",
+        ".ipc-title__text",
+        "h3.ipc-title__text",
+    ];
+
+    let mut results = Vec::new();
     
-    // Generate new name by processing the original name
-    let new_name = process_filename(original_name);
-      // If the name doesn't change, skip renaming
-    if new_name == original_name {
-        println!("No changes needed for: {}", rename_op.get_original_name());
-        return true; // Consider this a success since no action was needed
-    }    // Update the rename operation with the new name
-    rename_op.update_new_name(new_name);
+    for selector_str in &selectors {
+        if let Ok(selector) = Selector::parse(selector_str) {
+            for element in document.select(&selector) {
+                let text = element.text().collect::<String>();
+                if text.contains('∙') {
+                    if let Some(title) = text.split('∙').last() {
+                        let cleaned_title = title.trim().to_string();
+                        if !cleaned_title.is_empty() {
+                            results.push(cleaned_title);
+                        }
+                    }
+                } else if !text.trim().is_empty() && !text.contains("S.") {
+                    // Filter out episode numbers like "S1.E1"
+                    results.push(text.trim().to_string());
+                }
+            }
+        }
+        
+        if !results.is_empty() {
+            break;
+        }
+    }
+
+    // Remove duplicates while preserving order
+    let mut unique_results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     
-    // Execute the rename
-    match rename_op.execute() {
-        RenameResult::Success(_) => {
-            println!("Successfully renamed to: {}", rename_op.get_new_name());
-            true
+    for result in results {
+        if seen.insert(result.clone()) {
+            unique_results.push(result);
         }
-        RenameResult::AlreadyExists => {
-            println!("Error: Target file '{}' already exists!", rename_op.get_new_name());
-            false
+    }
+
+    Ok(unique_results)
+}
+
+// Interactive configuration builder
+pub struct ConfigBuilder {
+    directory: Option<PathBuf>,
+    season: Option<String>,
+    season_num: Option<u32>,
+    year: Option<String>,
+    use_imdb: bool,
+    imdb_id: Option<String>,
+}
+
+impl ConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            directory: None,
+            season: None,
+            season_num: None,
+            year: None,
+            use_imdb: false,
+            imdb_id: None,
         }
-        RenameResult::NoPermission => {
-            println!("Error: No permission to rename '{}'!", file_path);
-            false
+    }
+
+    pub fn directory<P: AsRef<Path>>(mut self, dir: P) -> Self {
+        self.directory = Some(dir.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn season(mut self, season: String) -> Self {
+        // Extract season number from season string
+        if let Some(season_num) = season.strip_prefix('S').or_else(|| season.strip_prefix('s')) {
+            if let Ok(num) = season_num.parse::<u32>() {
+                self.season_num = Some(num);
+                self.season = Some(format!("S{:02}", num));
+            }
+        } else if let Ok(num) = season.parse::<u32>() {
+            self.season_num = Some(num);
+            self.season = Some(format!("S{:02}", num));
         }
-        RenameResult::SourceNotFound => {
-            println!("Error: Source file '{}' not found!", file_path);
-            false
-        }
-        RenameResult::OtherError(msg) => {
-            println!("Error renaming '{}': {}", file_path, msg);
-            false
-        }
+        self
+    }
+
+    pub fn year(mut self, year: Option<String>) -> Self {
+        self.year = year;
+        self
+    }
+
+    pub fn imdb(mut self, imdb_id: Option<String>) -> Self {
+        self.use_imdb = imdb_id.is_some();
+        self.imdb_id = imdb_id;
+        self
+    }
+
+    pub fn build(self) -> Result<RenameConfig> {
+        let directory = self.directory
+            .ok_or_else(|| anyhow::anyhow!("Directory is required"))?;
+        
+        let season = self.season
+            .ok_or_else(|| anyhow::anyhow!("Season is required"))?;
+            
+        let season_num = self.season_num
+            .ok_or_else(|| anyhow::anyhow!("Season number is required"))?;
+
+        Ok(RenameConfig {
+            directory,
+            season,
+            season_num,
+            year: self.year,
+            use_imdb: self.use_imdb,
+            imdb_id: self.imdb_id,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_rename_operation_creation() {
-        let op = RenameOperation::new("/path/to/file.txt");
-        assert_eq!(op.get_original_name(), "file.txt");
-        assert_eq!(op.get_extension(), ".txt");
-        assert_eq!(op.get_name_without_extension(), "file");
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("Test: File/Name"), "Test_ File_Name");
+        assert_eq!(sanitize_filename("Normal_File.Name"), "Normal_File.Name");
     }
-    
+
     #[test]
-    fn test_update_new_name() {
-        let mut op = RenameOperation::new("/path/to/file.txt");
-        op.update_new_name("newfile".to_string());
-        assert_eq!(op.get_new_name(), "newfile.txt");
+    fn test_extract_season_from_directory() {
+        assert_eq!(extract_season_from_directory("Show.S01"), Some(1));
+        assert_eq!(extract_season_from_directory("Show.s02.1080p"), Some(2));
+        assert_eq!(extract_season_from_directory("Random.Folder"), None);
+    }
+
+    #[tokio::test]
+    async fn test_config_builder() {
+        let config = ConfigBuilder::new()
+            .directory("/test/path")
+            .season("S01".to_string())
+            .year(Some("2023".to_string()))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.season, "S01");
+        assert_eq!(config.season_num, 1);
+        assert_eq!(config.year, Some("2023".to_string()));
     }
 }
