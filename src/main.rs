@@ -1,5 +1,4 @@
 use std::env;
-use std::io;
 use std::path::Path;
 
 mod rename_engine;
@@ -39,19 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     } else {
-        vec![]
-    };
+        vec![]    };
 
-    // Get the directory from the first file or use the argument if it's a directory
-    let directory = if !selected_files.is_empty() {
-        if let Some(first_file) = selected_files.first() {
-            Path::new(first_file)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-        } else {
-            None
-        }
-    } else if args.len() >= 2 {
+    // Determine directory argument for TUI
+    let directory_arg = if args.len() >= 2 {
         let path = Path::new(&args[1]);
         if path.is_dir() {
             Some(args[1].clone())
@@ -63,12 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Launch the TUI with pre-selected files
-    tui::run_tui(directory, selected_files).await?;
+    tui::run_tui(directory_arg, selected_files).await?;
 
     Ok(())
-}
-
-fn pause_and_exit() {
-    println!("\nPress Enter to close this window...");
-    let _ = io::stdin().read_line(&mut String::new());
 }

@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::rename_engine::{RenameConfig, RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory, extract_season_from_filename};
+use crate::rename_engine::{RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory, extract_season_from_filename};
 
 #[derive(Debug, Clone)]
 pub struct FileItem {
@@ -51,12 +51,10 @@ pub struct App {
     pub show_preview: bool,
     pub show_config: bool,
     pub config_input_mode: ConfigInputMode,
-    pub config_input: String,
     pub scroll_state: ScrollbarState,
     pub start_time: Option<Instant>,
     pub finished: bool,
     pub stats: ProcessingStats,
-    pub config: Option<RenameConfig>,
     pub rename_engine: Option<RenameEngine>,
     pub directory_input: String,
     pub season_input: String,
@@ -73,7 +71,6 @@ pub enum ConfigInputMode {
     ImdbChoice,
     ImdbId,
     Confirm,
-    None,
 }
 
 #[derive(Debug, Default)]
@@ -82,11 +79,9 @@ pub struct ProcessingStats {
     pub processed: usize,
     pub successful: usize,
     pub failed: usize,
-    pub skipped: usize,
 }
 
-impl App {
-    pub fn new() -> Self {
+impl App {    pub fn new() -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
@@ -100,12 +95,10 @@ impl App {
             show_preview: true,
             show_config: true,
             config_input_mode: ConfigInputMode::Directory,
-            config_input: String::new(),
             scroll_state: ScrollbarState::default(),
             start_time: None,
             finished: false,
             stats: ProcessingStats::default(),
-            config: None,
             rename_engine: None,
             directory_input: String::new(),
             season_input: String::new(),
@@ -113,7 +106,7 @@ impl App {
             imdb_id_input: String::new(),
             use_imdb: false,
         }
-    }    pub fn with_directory(directory: String) -> Self {
+    }pub fn with_directory(directory: String) -> Self {
         let mut app = Self::new();
         app.directory_input = directory.clone();
         
@@ -494,8 +487,6 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
-    let mut processing = false;
-    
     loop {
         terminal.draw(|f| ui(f, app))?;
 
@@ -528,7 +519,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 app.previous();
                             }
                         }
-                        KeyCode::Enter => {                            if app.show_config {
+                        KeyCode::Enter => {
+                            if app.show_config {
                                 if app.config_input_mode == ConfigInputMode::Confirm {
                                     // Create engine
                                     if let Err(_e) = app.create_rename_engine().await {
@@ -553,10 +545,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 } else {
                                     app.advance_config_step();
                                 }
-                            } else if !processing && !app.finished {
-                                processing = true;
+                            } else if !app.finished {
                                 let _ = app.process_files().await;
-                                processing = false;
                             }
                         }
                         KeyCode::Char(c) => {
@@ -582,7 +572,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn ui(f: &mut Frame, app: &App) {
-    let size = f.size();
+    let size = f.area();
 
     if app.show_config {
         render_config_screen(f, size, app);
@@ -783,12 +773,10 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             } else {
                 "Season auto-detected! Press Enter to continue or type to edit"
             }
-        },
-        ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
+        },        ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
         ConfigInputMode::ImdbChoice => "Would you like to fetch episode titles from IMDb?",
         ConfigInputMode::ImdbId => "Enter the IMDb series ID (found in the URL)",
         ConfigInputMode::Confirm => "Review your settings and press Enter to continue",
-        ConfigInputMode::None => "",
     };
 
     let help_text = Paragraph::new(instructions)
@@ -914,10 +902,9 @@ fn render_file_list(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
-            .end_symbol(Some("↓"));
-        f.render_stateful_widget(
+            .end_symbol(Some("↓"));        f.render_stateful_widget(
             scrollbar,
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: 1,
                 horizontal: 0,
             }),
@@ -1022,7 +1009,7 @@ fn render_preview_panel(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 }
 
 fn render_help_popup(f: &mut Frame, _app: &App) {
-    let popup_area = centered_rect(60, 50, f.size());
+    let popup_area = centered_rect(60, 50, f.area());
 
     let help_text = vec![
         Line::from(vec![

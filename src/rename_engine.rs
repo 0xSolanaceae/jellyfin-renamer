@@ -26,7 +26,6 @@ pub struct FileRename {
 
 #[derive(Debug, Clone)]
 pub struct RenameResult {
-    pub file_rename: FileRename,
     pub success: bool,
     pub error_message: Option<String>,
 }
@@ -222,35 +221,19 @@ impl RenameEngine {
         }
         
         meaningful_parts.join(" ")
-    }
-
-    pub async fn rename_file(&self, file_rename: &FileRename) -> RenameResult {
+    }    pub async fn rename_file(&self, file_rename: &FileRename) -> RenameResult {
         let new_path = self.config.directory.join(&file_rename.new_name);
         
         match fs::rename(&file_rename.original_path, &new_path) {
             Ok(_) => RenameResult {
-                file_rename: file_rename.clone(),
                 success: true,
                 error_message: None,
             },
             Err(e) => RenameResult {
-                file_rename: file_rename.clone(),
                 success: false,
                 error_message: Some(e.to_string()),
             }
-        }
-    }
-
-    pub async fn rename_files(&self, files: &[FileRename]) -> Vec<RenameResult> {
-        let mut results = Vec::new();
-        
-        for file in files {
-            let result = self.rename_file(file).await;
-            results.push(result);
-        }
-        
-        results
-    }
+        }    }
 }
 
 // Helper function to sanitize filenames
