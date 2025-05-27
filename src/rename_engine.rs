@@ -30,7 +30,7 @@ pub struct FileRename {
     pub episode_number: u32,
     pub season_number: u32,
     pub episode_title: String,
-    pub needs_rename: bool, // Whether this file actually needs to be renamed
+    pub needs_rename: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -53,12 +53,10 @@ impl RenameEngine {
         let standard_pattern = Regex::new(
             r"(?i)(?P<title>.*?)S(?P<season>\d{1,2})E(?P<episode>\d{2})(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
         )?;
-        
-        let flexible_pattern = Regex::new(
+          let flexible_pattern = Regex::new(
             r"(?i)(?P<title>.*?)\b(?P<season>\d{1,2})x(?P<episode>\d{2})\b(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
         )?;
 
-        // Movie pattern to handle prefixes like "Watch", suffixes like torrent site names
         let movie_pattern = Regex::new(
             r"(?i)^(?:Watch\s+)?(?P<title>.*?)(?:\s*-\s*(?P<suffix>.*?))?\.(?P<extension>mkv|mp4|avi)$"
         )?;
@@ -93,9 +91,7 @@ impl RenameEngine {
     }    pub fn scan_directory(&self) -> Result<Vec<FileRename>> {
         if !self.config.directory.exists() {
             return Err(anyhow::anyhow!("Directory does not exist: {:?}", self.config.directory));
-        }
-
-        let files: Vec<_> = fs::read_dir(&self.config.directory)?
+        }        let files: Vec<_> = fs::read_dir(&self.config.directory)?
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
             .map(|entry| entry.file_name().to_string_lossy().to_string())
@@ -105,10 +101,8 @@ impl RenameEngine {
         
         match self.config.file_type {
             FileType::TvShow => {
-                // Process as TV show episodes
                 let mut files_for_flexible = Vec::new();
                 
-                // Try standard pattern first
                 for filename in &files {
                     if let Some(rename) = self.process_file_standard(filename)? {
                         proposed_renames.push(rename);
@@ -117,7 +111,6 @@ impl RenameEngine {
                     }
                 }
 
-                // If no matches with standard pattern, try flexible pattern
                 if proposed_renames.is_empty() && !files_for_flexible.is_empty() {
                     println!("No files matched standard pattern, trying flexible pattern...");
                     
@@ -129,7 +122,6 @@ impl RenameEngine {
                 }
             },
             FileType::Movie => {
-                // Process as movies
                 for filename in &files {
                     if let Some(rename) = self.process_file_movie(filename)? {
                         proposed_renames.push(rename);
@@ -201,12 +193,12 @@ impl RenameEngine {
                 title.replace('.', "_")
             };
 
-            let sanitized_title = sanitize_filename(&episode_title.replace(' ', "_"));
-            let year_part = self.config.year.as_ref()
+            let sanitized_title = sanitize_filename(&episode_title.replace(' ', "_"));            let year_part = self.config.year.as_ref()
                 .map(|y| format!("({})", y))
                 .unwrap_or_default();
-              let new_name = format!("{}_{}{}.{}", 
-                sanitized_title, 
+
+            let new_name = format!("{}_{}{}.{}", 
+                sanitized_title,
                 self.config.season, 
                 year_part, 
                 extension
@@ -223,28 +215,21 @@ impl RenameEngine {
                 season_number,
                 episode_title,
                 needs_rename,
-            }));
-        }Ok(None)
-    }
+            }));        }
 
-    // Process a file with a manual season override
-    pub fn process_file_with_manual_season(&self, filename: &str, manual_season: u32) -> Result<Option<FileRename>> {
-        // Try to extract episode information first using standard or flexible pattern
+        Ok(None)
+    }pub fn process_file_with_manual_season(&self, filename: &str, manual_season: u32) -> Result<Option<FileRename>> {
         let mut file_rename_result = self.process_file_standard(filename)?;
         if file_rename_result.is_none() {
             file_rename_result = self.process_file_flexible(filename)?;
         }
         
-        // If neither standard nor flexible patterns work, try movie pattern
         if file_rename_result.is_none() {
             file_rename_result = self.process_file_movie(filename)?;
         }
         
         if let Some(mut file_rename) = file_rename_result {
-            // For episodes (episode_number > 0), override the season
-            // For movies (episode_number = 0), keep the movie formatting
             if file_rename.episode_number > 0 {
-                // This is a TV episode - override the season
                 let extension = std::path::Path::new(filename)
                     .extension()
                     .and_then(|ext| ext.to_str())
@@ -252,7 +237,6 @@ impl RenameEngine {
                     
                 let sanitized_title = sanitize_filename(&file_rename.episode_title.replace(' ', "_"));
                 
-                // Create new filename with manual season
                 let season_episode = format!("S{:02}E{:02}", manual_season, file_rename.episode_number);
                 
                 let new_name = if let Some(year) = &self.config.year {
@@ -261,28 +245,21 @@ impl RenameEngine {
                     format!("{}_({}).{}", sanitized_title, season_episode, extension)
                 };
                 
-                // Update file rename with new name and check if rename is needed
                 file_rename.new_name = new_name;
                 file_rename.needs_rename = filename != &file_rename.new_name;
                 file_rename.season_number = manual_season;
             }
-            // For movies (episode_number = 0), the formatting is already correct from process_file_movie
             
             return Ok(Some(file_rename));
         }
         
-        // No matching pattern found
         Ok(None)
-    }
-
-    // Process a movie file (no season/episode, just clean title with year)
-    pub fn process_file_movie(&self, filename: &str) -> Result<Option<FileRename>> {
+    }    pub fn process_file_movie(&self, filename: &str) -> Result<Option<FileRename>> {
         if let Some(captures) = self.movie_pattern.captures(filename) {
             let raw_title = captures.name("title").unwrap().as_str();
             let extension = captures.name("extension").unwrap().as_str();
             let suffix = captures.name("suffix").map(|s| s.as_str()).unwrap_or("");
             
-            // Clean the title by removing common prefixes, suffixes, and quality indicators
             let cleaned_title = self.clean_movie_title(raw_title, suffix);
             
             if cleaned_title.is_empty() {
@@ -290,19 +267,20 @@ impl RenameEngine {
             }
             
             let sanitized_title = sanitize_filename(&cleaned_title.replace(' ', "_"));
-              // For movies, format as: Title_(year).extension with underscore before year
+            
             let year_part = self.config.year.as_ref()
                 .map(|y| format!("_({})", y))
                 .unwrap_or_default();
-                  let new_name = format!("{}{}.{}", sanitized_title, year_part, extension);
+                
+            let new_name = format!("{}{}.{}", sanitized_title, year_part, extension);
             
             let file_rename = FileRename {
                 original_path: self.config.directory.join(filename),
                 original_name: filename.to_string(),
                 new_name: new_name.clone(),
                 episode_title: cleaned_title,
-                episode_number: 0, // No episode number for movies
-                season_number: 1, // Default season for movies
+                episode_number: 0,
+                season_number: 1,
                 needs_rename: filename != new_name,
             };
             
@@ -310,13 +288,9 @@ impl RenameEngine {
         }
         
         Ok(None)
-    }
-
-    // Clean movie title by removing prefixes, suffixes, and quality indicators
-    fn clean_movie_title(&self, title: &str, suffix: &str) -> String {
+    }fn clean_movie_title(&self, title: &str, suffix: &str) -> String {
         let mut cleaned = title.trim().to_string();
         
-        // Remove common prefixes (case insensitive)
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
             let pattern = format!("^{}", regex::escape(prefix));
@@ -325,7 +299,6 @@ impl RenameEngine {
             }
         }
         
-        // Remove common suffixes and quality indicators from both title and suffix
         let quality_indicators = [
             "1080p", "720p", "480p", "4k", "hd", "bluray", "blu-ray", "dvdrip", 
             "webrip", "web-dl", "hdtv", "x264", "x265", "h264", "h265", "xvid",
@@ -333,7 +306,6 @@ impl RenameEngine {
             "yify", "rarbg", "ettv", "eztv", "torrent", "bit", "hexa watch"
         ];
         
-        // Process suffix for additional title information, but filter out quality indicators
         if !suffix.is_empty() {
             let suffix_words: Vec<&str> = suffix.split(&[' ', '.', '-', '_'][..])
                 .filter(|word| !word.is_empty())
@@ -343,35 +315,29 @@ impl RenameEngine {
                 })
                 .collect();
             
-            // If suffix has meaningful content (not just quality indicators), it might be part of title
             if !suffix_words.is_empty() && suffix_words.len() <= 3 {
-                // Only add if it looks like part of the title (short phrases)
                 let suffix_text = suffix_words.join(" ");
                 if !cleaned.to_lowercase().contains(&suffix_text.to_lowercase()) {
                     cleaned = format!("{} {}", cleaned, suffix_text);
                 }
             }
         }
-          // Final cleanup: remove quality indicators from the main title
+        
         for indicator in &quality_indicators {
             let pattern = format!(r"(?i)\b{}\b", regex::escape(indicator));
             if let Ok(re) = Regex::new(&pattern) {
                 cleaned = re.replace_all(&cleaned, "").to_string();
             }
         }
-          // Extract and remove years from title (19xx or 20xx), but only if no year is already configured
+        
         if self.config.year.is_none() {
             if let Ok(year_regex) = Regex::new(r"\b(19\d{2}|20\d{2})\b") {
                 if let Some(_year_match) = year_regex.find(&cleaned) {
-                    // Remove the year from the title
                     cleaned = year_regex.replace(&cleaned, "").trim().to_string();
-                    // Note: In a real implementation, you might want to store the extracted year
-                    // somewhere to use it in the filename format
                 }
             }
         }
         
-        // Clean up extra whitespace and punctuation
         cleaned = cleaned.trim()
             .replace("  ", " ")
             .replace(" .", "")
@@ -382,7 +348,6 @@ impl RenameEngine {
             .trim()
             .to_string();
         
-        // Capitalize each word properly
         cleaned.split_whitespace()
             .map(|word| {
                 let mut chars: Vec<char> = word.chars().collect();
@@ -393,12 +358,9 @@ impl RenameEngine {
             })
             .collect::<Vec<String>>()
             .join(" ")
-    }    // Extract episode title from filename suffix
-    fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
-        // Clean the suffix by removing common quality indicators and torrent site names
+    }    fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
         let cleaned = suffix.trim().to_string();
         
-        // Remove quality indicators and technical info
         let quality_indicators = [
             "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
             "x264", "x265", "h264", "h265", "xvid", "divx", "mpeg",
@@ -408,24 +370,18 @@ impl RenameEngine {
             "pahe.in", "rarbg", "yify", "ettv", "eztv", "torrent", "bit",
             "hexa", "watch", "download", "stream", "720p.bluray", "1080p.bluray"
         ];
-        
-        // Split by common separators and filter out quality indicators
-        let words: Vec<&str> = cleaned.split(&['.', '-', '_', ' '][..])
+          let words: Vec<&str> = cleaned.split(&['.', '-', '_', ' '][..])
             .filter(|word| !word.is_empty())
             .filter(|word| {
                 let word_lower = word.to_lowercase();
-                // Keep words that are not quality indicators
                 !quality_indicators.iter().any(|indicator| {
                     word_lower == indicator.to_lowercase() || 
                     word_lower.contains(&indicator.to_lowercase())
                 })
             })
             .collect();
-        
-        // Take the first meaningful word(s) as the episode title
-        let mut title_words = Vec::new();
+          let mut title_words = Vec::new();
         for word in words {
-            // Stop if we hit common technical terms that usually come after title
             if word.to_lowercase().contains("x264") || 
                word.to_lowercase().contains("x265") ||
                word.to_lowercase().contains("bluray") ||
@@ -436,7 +392,6 @@ impl RenameEngine {
             }
             title_words.push(word);
             
-            // Typically episode titles are 1-3 words
             if title_words.len() >= 3 {
                 break;
             }
@@ -445,11 +400,8 @@ impl RenameEngine {
         if title_words.is_empty() {
             return "Episode".to_string();
         }
+          let title = title_words.join(" ");
         
-        // Join the title words and capitalize properly
-        let title = title_words.join(" ");
-        
-        // Capitalize each word properly
         title.split_whitespace()
             .map(|word| {
                 let mut chars: Vec<char> = word.chars().collect();
@@ -472,17 +424,12 @@ impl RenameEngine {
             },
             Err(e) => RenameResult {
                 success: false,
-                error_message: Some(e.to_string()),
-            }
-        }    }
-
-    // Process a file with a specific year (for multiple movies with individual years)
-    pub fn process_file_with_year(&self, filename: &str, year: Option<String>) -> Result<Option<FileRename>> {
-        // Create a temporary config with the specific year
+                error_message: Some(e.to_string()),            }
+        }
+    }    pub fn process_file_with_year(&self, filename: &str, year: Option<String>) -> Result<Option<FileRename>> {
         let mut temp_config = self.config.clone();
         temp_config.year = year;
         
-        // Create a temporary engine with the updated config
         let temp_engine = RenameEngine {
             config: temp_config,
             imdb_titles: self.imdb_titles.clone(),
@@ -490,11 +437,8 @@ impl RenameEngine {
             flexible_pattern: self.flexible_pattern.clone(),
             movie_pattern: self.movie_pattern.clone(),
         };
-        
-        // Try different processing methods based on file type
-        match self.config.file_type {
+          match self.config.file_type {
             FileType::TvShow => {
-                // For TV shows, try standard then flexible patterns
                 if let Some(file_rename) = temp_engine.process_file_standard(filename)? {
                     return Ok(Some(file_rename));
                 } else if let Some(file_rename) = temp_engine.process_file_flexible(filename)? {
@@ -502,7 +446,6 @@ impl RenameEngine {
                 }
             },
             FileType::Movie => {
-                // For movies, use movie processing
                 if let Some(file_rename) = temp_engine.process_file_movie(filename)? {
                     return Ok(Some(file_rename));
                 }
@@ -513,20 +456,17 @@ impl RenameEngine {
     }
 }
 
-// Helper function to sanitize filenames
 pub fn sanitize_filename(filename: &str) -> String {
     let re = Regex::new(r#"[<>:"/\\|?*]"#).unwrap();
     re.replace_all(filename, "_").to_string()
 }
 
-// Helper function to extract season number from directory name
 pub fn extract_season_from_directory(dir_name: &str) -> Option<u32> {
-    // Try multiple patterns for season detection
     let patterns = [
-        r"s(?:eason\s*)?(\d+)",           // s1, season 1, s01, season 01
-        r"(?:season\s+)(\d+)",            // season 1, season 01
-        r"(\d+)(?:st|nd|rd|th)\s*season", // 1st season, 2nd season
-        r"series\s*(\d+)",                // series 1, series 01
+        r"s(?:eason\s*)?(\d+)",           
+        r"(?:season\s+)(\d+)",            
+        r"(\d+)(?:st|nd|rd|th)\s*season", 
+        r"series\s*(\d+)",                
     ];
     
     let dir_lower = dir_name.to_lowercase();
@@ -546,13 +486,11 @@ pub fn extract_season_from_directory(dir_name: &str) -> Option<u32> {
     None
 }
 
-// Helper function to extract season number from file name
 pub fn extract_season_from_filename(filename: &str) -> Option<u32> {
-    // Try to extract season from standard patterns in filename
     let patterns = [
-        r"S(\d{1,2})E\d{2}",              // S01E01, S1E01
-        r"(?:season\s*)?(\d+)x\d{2}",     // 1x01, season 1x01
-        r"s(\d+)e\d+",                    // s1e01, s01e01
+        r"S(\d{1,2})E\d{2}",              
+        r"(?:season\s*)?(\d+)x\d{2}",     
+        r"s(\d+)e\d+",                    
     ];
     
     let filename_lower = filename.to_lowercase();
@@ -572,7 +510,6 @@ pub fn extract_season_from_filename(filename: &str) -> Option<u32> {
     None
 }
 
-// IMDb scraping functionality
 pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<Vec<String>> {
     let mut url = format!("https://www.imdb.com/title/{}/episodes", imdb_id);
     if let Some(season_num) = season {
@@ -591,10 +528,8 @@ pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<
         return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
     }
 
-    let html = response.text().await?;
-    let document = Html::parse_document(&html);
+    let html = response.text().await?;    let document = Html::parse_document(&html);
     
-    // Try multiple selectors as IMDb's structure can vary
     let selectors = [
         "div.ipc-title.ipc-title--base.ipc-title--title .ipc-title__text",
         ".titleColumn a",
@@ -614,20 +549,16 @@ pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<
                         if !cleaned_title.is_empty() {
                             results.push(cleaned_title);
                         }
-                    }
-                } else if !text.trim().is_empty() && !text.contains("S.") {
-                    // Filter out episode numbers like "S1.E1"
+                    }                } else if !text.trim().is_empty() && !text.contains("S.") {
                     results.push(text.trim().to_string());
                 }
             }
         }
         
         if !results.is_empty() {
-            break;
-        }
+            break;        }
     }
 
-    // Remove duplicates while preserving order
     let mut unique_results = Vec::new();
     let mut seen = std::collections::HashSet::new();
     
@@ -640,7 +571,6 @@ pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<
     Ok(unique_results)
 }
 
-// Interactive configuration builder
 pub struct ConfigBuilder {
     directory: Option<PathBuf>,
     season: Option<String>,
@@ -666,10 +596,7 @@ impl ConfigBuilder {    pub fn new() -> Self {
     pub fn directory<P: AsRef<Path>>(mut self, dir: P) -> Self {
         self.directory = Some(dir.as_ref().to_path_buf());
         self
-    }
-
-    pub fn season(mut self, season: String) -> Self {
-        // Extract season number from season string
+    }    pub fn season(mut self, season: String) -> Self {
         if let Some(season_num) = season.strip_prefix('S').or_else(|| season.strip_prefix('s')) {
             if let Ok(num) = season_num.parse::<u32>() {
                 self.season_num = Some(num);
@@ -700,16 +627,13 @@ impl ConfigBuilder {    pub fn new() -> Self {
         
         let file_type = self.file_type
             .ok_or_else(|| anyhow::anyhow!("File type is required"))?;
-        
-        // For TV shows, season is required
-        let (season, season_num) = if file_type == FileType::TvShow {
+          let (season, season_num) = if file_type == FileType::TvShow {
             let season = self.season
                 .ok_or_else(|| anyhow::anyhow!("Season is required for TV shows"))?;
             let season_num = self.season_num
                 .ok_or_else(|| anyhow::anyhow!("Season number is required for TV shows"))?;
             (season, season_num)
         } else {
-            // For movies, use defaults
             (String::from("S01"), 1)
         };
 

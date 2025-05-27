@@ -29,16 +29,15 @@ pub struct App {
     pub rename_engine: Option<RenameEngine>,
     pub directory_input: String,
     pub season_input: String,
-    pub year_input: String,
-    pub movie_years: Vec<String>, // Individual years for each movie file
-    pub current_movie_index: usize, // Which movie we're currently setting year for
+    pub year_input: String,    pub movie_years: Vec<String>,
+    pub current_movie_index: usize,
     pub imdb_id_input: String,
     pub use_imdb: bool,
-    pub undo_operations: Vec<UndoOperation>, // Store undo operations
-    pub needs_refresh: bool, // Flag to trigger refresh when season changes
-    pub status_message: Option<String>, // Status message for user feedback
-    pub status_message_time: Option<Instant>, // When the status message was set
-    pub file_type: FileType, // Whether processing TV shows or movies
+    pub undo_operations: Vec<UndoOperation>,
+    pub needs_refresh: bool,
+    pub status_message: Option<String>,
+    pub status_message_time: Option<Instant>,
+    pub file_type: FileType,
 }
 
 impl App {
@@ -101,9 +100,7 @@ impl App {
                 if directory.is_none() {
                     directory = path.parent().map(|p| p.to_string_lossy().to_string());
                 }
-                
-                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                    // Try to detect season from filename if not already detected
+                  if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                     if detected_season.is_none() {
                         detected_season = extract_season_from_filename(filename);
                     }
@@ -111,28 +108,24 @@ impl App {
                     files.push(FileItem {
                         original_path: file_path.clone(),
                         original_name: filename.to_string(),
-                        new_name: filename.to_string(), // Will be updated during processing
+                        new_name: filename.to_string(),
                         status: ProcessingStatus::Pending,
                         error_message: None,
-                        episode_number: 0, // Will be detected during processing
+                        episode_number: 0,
                         episode_title: String::new(),
                     });
                 }
             }
         }
-        
-        app.files = files;
+          app.files = files;
         app.stats.total = app.files.len();
         
-        // Initialize movie_years vector with empty strings for each file
         app.movie_years = vec![String::new(); app.files.len()];
         
-        // Set directory input from the first file's directory
         if let Some(dir) = directory {
             app.directory_input = dir.clone();
         }
         
-        // Skip directory configuration if we have pre-selected files
         if !app.files.is_empty() {
             app.config_input_mode = ConfigInputMode::FileType;
         }
@@ -268,14 +261,11 @@ impl App {
                 self.status_message_time = None;
             }
         }
-    }
-
-    pub fn handle_config_input(&mut self, c: char) {
+    }    pub fn handle_config_input(&mut self, c: char) {
         match self.config_input_mode {
             ConfigInputMode::FileType => {
                 if c == 't' || c == 'T' {
                     self.file_type = FileType::TvShow;
-                    // Auto-detect season when TV shows are selected
                     self.auto_detect_season_for_tv_shows();
                     self.advance_config_step();
                 } else if c == 'm' || c == 'M' {
@@ -286,7 +276,7 @@ impl App {
             ConfigInputMode::Directory => {
                 if c == '\n' || c == '\r' {
                     self.advance_config_step();
-                } else if c == '\x08' { // Backspace
+                } else if c == '\x08' {
                     self.directory_input.pop();
                 } else {
                     self.directory_input.push(c);
@@ -297,13 +287,11 @@ impl App {
                     self.advance_config_step();
                 } else if c == '\x08' {
                     self.season_input.pop();
-                    // Trigger refresh if we have selected files and input is being modified
                     if !self.files.is_empty() {
                         self.needs_refresh = true;
                     }
                 } else {
                     self.season_input.push(c);
-                    // Trigger refresh if we have selected files and input is being modified
                     if !self.files.is_empty() {
                         self.needs_refresh = true;
                     }
@@ -311,50 +299,39 @@ impl App {
             }
             ConfigInputMode::Year => {
                 if c == '\n' || c == '\r' {
-                    // Validate year before advancing
                     if !self.year_input.is_empty() {
                         if let Ok(year) = self.year_input.parse::<u32>() {
                             if year >= 1900 && year <= 2100 {
                                 self.advance_config_step();
                             }
-                            // If invalid year, stay in Year mode (don't advance)
                         }
-                        // If not a valid number, stay in Year mode
                     } else {
-                        // Empty year is allowed for some cases
                         self.advance_config_step();
                     }
                 } else if c == '\x08' {
                     self.year_input.pop();
-                    // Trigger refresh if we have selected files and input is being modified
                     if !self.files.is_empty() {
                         self.needs_refresh = true;
                     }
                 } else if c.is_ascii_digit() {
                     self.year_input.push(c);
-                    // Trigger refresh if we have selected files and input is being modified
                     if !self.files.is_empty() {
                         self.needs_refresh = true;
                     }
                 }
-            }
-            ConfigInputMode::MovieYears => {
+            }            ConfigInputMode::MovieYears => {
                 if c == '\n' || c == '\r' {
-                    // Validate current movie year before advancing
                     let current_year = &self.movie_years[self.current_movie_index];
                     if !current_year.is_empty() {
                         if let Ok(year) = current_year.parse::<u32>() {
                             if year < 1900 || year > 2100 {
-                                // Invalid year, stay on this movie
                                 return;
                             }
                         } else {
-                            // Not a valid number, stay on this movie
                             return;
                         }
                     }
                     
-                    // Move to next movie or advance to next step
                     if self.current_movie_index < self.files.len() - 1 {
                         self.current_movie_index += 1;
                     } else {
@@ -423,13 +400,10 @@ impl App {
                 } else {
                     self.config_input_mode = ConfigInputMode::Year;
                 }
-            }
-            ConfigInputMode::Season => {
-                // For single TV episodes, go to Year
+            }            ConfigInputMode::Season => {
                 if self.files.len() == 1 {
                     self.config_input_mode = ConfigInputMode::Year;
                 } else {
-                    // For multiple TV episodes, go to IMDb choice
                     self.config_input_mode = ConfigInputMode::ImdbChoice;
                 }
             }
@@ -448,9 +422,7 @@ impl App {
             }
             ConfigInputMode::ImdbId => {
                 self.config_input_mode = ConfigInputMode::Confirm;
-            }
-            ConfigInputMode::Confirm => {
-                // Stay in confirm mode - handled elsewhere
+            }            ConfigInputMode::Confirm => {
             }
         }
     }
@@ -511,24 +483,19 @@ impl App {
         }
     }
 
-    pub fn handle_config_navigation(&mut self, key: KeyCode) {
-        match key {
+    pub fn handle_config_navigation(&mut self, key: KeyCode) {        match key {
             KeyCode::Left | KeyCode::Backspace => {
-                // For MovieYears mode, use left arrow to go to previous movie
                 if self.config_input_mode == ConfigInputMode::MovieYears {
                     if self.current_movie_index > 0 {
                         self.current_movie_index -= 1;
                     } else {
-                        // Only go back to previous step if we're at the first movie
                         self.go_back_config_step();
                     }
                 } else {
-                    // For all other modes, go back to previous configuration step
                     self.go_back_config_step();
                 }
             }
             KeyCode::Right => {
-                // For MovieYears mode, allow right arrow to go to next movie
                 if self.config_input_mode == ConfigInputMode::MovieYears {
                     if self.current_movie_index < self.files.len() - 1 {
                         self.current_movie_index += 1;
@@ -536,7 +503,6 @@ impl App {
                 }
             }
             KeyCode::Up => {
-                // For MovieYears mode, allow up arrow to go to previous movie
                 if self.config_input_mode == ConfigInputMode::MovieYears {
                     if self.current_movie_index > 0 {
                         self.current_movie_index -= 1;
@@ -544,7 +510,6 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                // For MovieYears mode, allow down arrow to go to next movie
                 if self.config_input_mode == ConfigInputMode::MovieYears {
                     if self.current_movie_index < self.files.len() - 1 {
                         self.current_movie_index += 1;
@@ -563,20 +528,16 @@ impl App {
             for index in 0..total_files {
                 self.current_processing = Some(index);
                 self.files[index].status = ProcessingStatus::Processing;
-                self.processing_progress = (index as f64) / (total_files as f64);
-
-                // Create FileRename from FileItem
-                let file_rename = FileRename {
+                self.processing_progress = (index as f64) / (total_files as f64);                let file_rename = FileRename {
                     original_path: PathBuf::from(&self.files[index].original_path),
                     original_name: self.files[index].original_name.clone(),
                     new_name: self.files[index].new_name.clone(),
                     episode_number: self.files[index].episode_number,
-                    season_number: 1, // Default season for processing
+                    season_number: 1,
                     episode_title: self.files[index].episode_title.clone(),
                     needs_rename: self.files[index].original_name != self.files[index].new_name,
                 };
 
-                // Skip files that don't need renaming
                 if !file_rename.needs_rename {
                     self.files[index].status = ProcessingStatus::Skipped;
                     self.stats.processed += 1;
@@ -584,12 +545,10 @@ impl App {
                 }
 
                 let result = engine.rename_file(&file_rename).await;
-                
-                if result.success {
+                  if result.success {
                     self.files[index].status = ProcessingStatus::Success;
                     self.stats.successful += 1;
                     
-                    // Track successful rename for undo
                     let new_path = PathBuf::from(&self.files[index].original_path)
                         .parent()
                         .unwrap()
@@ -609,7 +568,6 @@ impl App {
                 
                 self.stats.processed += 1;
 
-                // Small delay to show progress
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
 
@@ -772,16 +730,13 @@ impl App {
                 }
             }
         }
-        
-        // Reset processing state
-        self.finished = false;
+          self.finished = false;
         self.current_processing = None;
         self.processing_progress = 0.0;
         self.stats.successful = 0;
         self.stats.failed = 0;
         self.stats.processed = 0;
         
-        // Ensure list selection is valid
         if !self.files.is_empty() {
             let selected = self.list_state.selected().unwrap_or(0);
             if selected >= self.files.len() {
@@ -790,7 +745,6 @@ impl App {
             }
         }
         
-        // Set status message based on results
         if undo_errors.is_empty() {
             self.set_status_message(format!("Successfully undid {} rename operations", successful_undos));
         } else {
@@ -798,17 +752,13 @@ impl App {
         }
         
         Ok(())
-    }
-
-    // Auto-detect season information when TV shows are selected
-    pub fn auto_detect_season_for_tv_shows(&mut self) {
+    }    pub fn auto_detect_season_for_tv_shows(&mut self) {
         if self.file_type != FileType::TvShow {
             return;
         }
         
         let mut detected_season = None;
         
-        // Try to detect season from selected files first
         if !self.files.is_empty() {
             for file in &self.files {
                 if let Some(filename) = std::path::Path::new(&file.original_path).file_name().and_then(|f| f.to_str()) {
@@ -820,7 +770,6 @@ impl App {
             }
         }
         
-        // If no season detected from files, try directory name
         if detected_season.is_none() && !self.directory_input.is_empty() {
             if let Some(dir_path) = std::path::Path::new(&self.directory_input).file_name() {
                 if let Some(dir_name) = dir_path.to_str() {
@@ -828,7 +777,6 @@ impl App {
                 }
             }
             
-            // Also try parent directory if still not found
             if detected_season.is_none() {
                 if let Some(parent_path) = std::path::Path::new(&self.directory_input).parent() {
                     if let Some(parent_dir) = parent_path.file_name().and_then(|f| f.to_str()) {
@@ -838,7 +786,6 @@ impl App {
             }
         }
         
-        // Set detected season or default to S01
         if let Some(season_num) = detected_season {
             self.season_input = format!("S{:02}", season_num);
         } else if self.season_input.is_empty() {

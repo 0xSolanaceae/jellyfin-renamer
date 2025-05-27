@@ -21,25 +21,19 @@ pub fn ui(f: &mut Frame, app: &App) {
         render_config_screen(f, size, app);
     } else {
         render_main_screen(f, size, app);
-    }
-
-    // Help popup (if enabled)
-    if app.show_help {
+    }    if app.show_help {
         render_help_popup(f, app);
     }
 }
 
 pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+        .direction(Direction::Vertical)        .constraints([
             Constraint::Length(3),
             Constraint::Min(10),
-            Constraint::Length(5), // Increased height for instructions
-        ])
-        .split(area);
+            Constraint::Length(5),
+        ])        .split(area);
 
-    // Header
     let header = Paragraph::new("Jellyfin Rename Tool - Configuration")
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
@@ -48,50 +42,44 @@ pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &Ap
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White))
                 .border_style(Style::default().fg(Color::Cyan)),
-        );
-    f.render_widget(header, chunks[0]);
+        );    f.render_widget(header, chunks[0]);
 
-    // Configuration form - adjust constraints based on file count and file type
     let has_multiple_files = app.files.len() > 1;
     let is_tv_show = app.file_type == FileType::TvShow;
     let is_multiple_movies = app.file_type == FileType::Movie && has_multiple_files;
     
     let mut form_constraints = vec![
-        Constraint::Length(3), // File type
-        Constraint::Length(3), // Directory
+        Constraint::Length(3),
+        Constraint::Length(3),
     ];
     
-    // Add constraints based on file type and count
     if is_tv_show {
-        form_constraints.push(Constraint::Length(3)); // Season (for TV shows)
+        form_constraints.push(Constraint::Length(3));
     }
     
     if (is_tv_show && app.files.len() == 1) || (app.file_type == FileType::Movie && app.files.len() == 1) {
-        form_constraints.push(Constraint::Length(3)); // Year (for single files)
+        form_constraints.push(Constraint::Length(3));
     }
     
     if is_multiple_movies {
-        form_constraints.push(Constraint::Length(5)); // Movie years (multiple movies)
+        form_constraints.push(Constraint::Length(5));
     }
     
     if is_tv_show && has_multiple_files {
-        form_constraints.push(Constraint::Length(3)); // IMDb choice (for multiple TV episodes)
+        form_constraints.push(Constraint::Length(3));
         if app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId {
-            form_constraints.push(Constraint::Length(3)); // IMDb ID
+            form_constraints.push(Constraint::Length(3));
         }
     }
     
-    form_constraints.push(Constraint::Length(3)); // Confirm
-    form_constraints.push(Constraint::Min(1));    // Remaining space
+    form_constraints.push(Constraint::Length(3));
+    form_constraints.push(Constraint::Min(1));
     
     let form_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(form_constraints)
-        .split(chunks[1]);
+        .split(chunks[1]);    let mut current_chunk_index = 0;
 
-    let mut current_chunk_index = 0;
-
-    // File type selection
     let file_type_text = if app.config_input_mode == ConfigInputMode::FileType {
         "Press T for TV Shows, M for Movies"
     } else {

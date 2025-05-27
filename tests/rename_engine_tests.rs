@@ -1,5 +1,3 @@
-// Integration tests for the rename engine module
-
 use std::path::PathBuf;
 use jellyfin_rename::rename_engine::{
     sanitize_filename, extract_season_from_directory, scrape_imdb_episodes,

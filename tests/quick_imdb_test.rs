@@ -73,7 +73,7 @@ async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<Vec<
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🎬 Quick IMDb Scraper Test\n");
+    println!("IMDb Scraper Test\n");
     
     // Test with popular shows
     let test_cases = [
@@ -90,9 +90,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match scrape_imdb_episodes(imdb_id, Some(*season)).await {
             Ok(episodes) => {
                 if episodes.is_empty() {
-                    println!("   ❌ No episodes found");
+                    println!("   No episodes found");
                 } else {
-                    println!("   ✅ Found {} episodes:", episodes.len());
+                    println!("   Found {} episodes:", episodes.len());
                     for (i, episode) in episodes.iter().take(3).enumerate() {
                         println!("      Episode {}: {}", i + 1, episode);
                     }
@@ -102,13 +102,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(e) => {
-                println!("   ❌ Error: {}", e);
+                println!("   Error: {}", e);
             }
         }
         println!();
     }
     
-    println!("🎯 Test with your own show:");
+    println!("Test with your own show:");
     println!("   Find the IMDb URL (e.g., https://www.imdb.com/title/tt0903747/)");
     println!("   Extract the ID (e.g., tt0903747)");
     println!("   Run: cargo test test_imdb_scraper_breaking_bad -- --nocapture");

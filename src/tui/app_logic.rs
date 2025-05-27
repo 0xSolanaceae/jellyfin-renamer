@@ -9,12 +9,9 @@ use super::app::App;
 use super::models::{FileItem, ProcessingStatus, ConfigInputMode, UndoOperation};
 
 impl App {
-    // Configuration and engine methods
     pub async fn create_rename_engine(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Ensure season input is properly formatted for TV shows
         if self.file_type == FileType::TvShow {
             if !self.season_input.starts_with('S') && !self.season_input.starts_with('s') {
-                // Convert raw number to S format (e.g., "2" to "S02")
                 if let Ok(season_num) = self.season_input.parse::<u32>() {
                     self.season_input = format!("S{:02}", season_num);
                 }
@@ -30,10 +27,7 @@ impl App {
         } else {
             config
         };
-        
-        // For single files (TV or movie), use the single year input
-        // For multiple movies, we'll handle individual years during processing
-        let config = if self.files.len() == 1 { 
+          let config = if self.files.len() == 1 { 
             config.year(if self.year_input.is_empty() { None } else { Some(self.year_input.clone()) })
         } else if self.file_type == FileType::TvShow && !self.year_input.is_empty() { 
             config.year(Some(self.year_input.clone()))
@@ -80,15 +74,11 @@ impl App {
             }
         }
         Ok(())
-    }
-
-    // Configuration input handling
-    pub fn handle_config_input(&mut self, c: char) {
+    }    pub fn handle_config_input(&mut self, c: char) {
         match self.config_input_mode {
             ConfigInputMode::FileType => {
                 if c == 't' || c == 'T' {
                     self.file_type = FileType::TvShow;
-                    // Auto-detect season when TV shows are selected
                     self.auto_detect_season_for_tv_shows();
                     self.advance_config_step();
                 } else if c == 'm' || c == 'M' {
@@ -148,25 +138,20 @@ impl App {
                         self.needs_refresh = true;
                     }
                 }
-            }
-            ConfigInputMode::MovieYears => {
+            }            ConfigInputMode::MovieYears => {
                 if c == '\n' || c == '\r' {
-                    // Validate current movie year before advancing
                     if self.current_movie_index < self.movie_years.len() {
                         let current_year = &self.movie_years[self.current_movie_index];
                         if !current_year.is_empty() {
                             if let Ok(year) = current_year.parse::<u32>() {
                                 if year < 1900 || year > 2100 {
-                                    // Invalid year, stay on this movie
                                     return;
                                 }
                             } else {
-                                // Not a valid number, stay on this movie
                                 return;
                             }
                         }
                         
-                        // Move to next movie or advance to next step
                         if self.current_movie_index < self.files.len() - 1 {
                             self.current_movie_index += 1;
                         } else {
@@ -291,13 +276,11 @@ impl App {
                     }
                 }
             }
-            ConfigInputMode::MovieYears => {
-                if !self.files.is_empty() {
+            ConfigInputMode::MovieYears => {                if !self.files.is_empty() {
                     self.config_input_mode = ConfigInputMode::FileType;
                 } else {
                     self.config_input_mode = ConfigInputMode::Directory;
                 }
-                // Reset to first movie when going back
                 self.current_movie_index = 0;
             }
             ConfigInputMode::ImdbChoice => {
@@ -349,17 +332,13 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    // Auto-detect season information when TV shows are selected
-    pub fn auto_detect_season_for_tv_shows(&mut self) {
+    }    pub fn auto_detect_season_for_tv_shows(&mut self) {
         if self.file_type != FileType::TvShow {
             return;
         }
         
         let mut detected_season = None;
         
-        // Try to detect season from selected files first
         if !self.files.is_empty() {
             for file in &self.files {
                 if let Some(filename) = std::path::Path::new(&file.original_path).file_name().and_then(|f| f.to_str()) {
@@ -371,7 +350,6 @@ impl App {
             }
         }
         
-        // If no season detected from files, try directory name
         if detected_season.is_none() && !self.directory_input.is_empty() {
             if let Some(dir_path) = std::path::Path::new(&self.directory_input).file_name() {
                 if let Some(dir_name) = dir_path.to_str() {
@@ -379,7 +357,6 @@ impl App {
                 }
             }
             
-            // Also try parent directory if still not found
             if detected_season.is_none() {
                 if let Some(parent_path) = std::path::Path::new(&self.directory_input).parent() {
                     if let Some(parent_dir) = parent_path.file_name().and_then(|f| f.to_str()) {
@@ -389,7 +366,6 @@ impl App {
             }
         }
         
-        // Set detected season or default to S01
         if let Some(season_num) = detected_season {
             self.season_input = format!("S{:02}", season_num);
         } else if self.season_input.is_empty() {
