@@ -1,4 +1,3 @@
-// TUI module - Re-exports from organized submodules
 pub mod app;
 pub mod events;
 pub mod models;

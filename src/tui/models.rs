@@ -1,6 +1,3 @@
-use crate::rename_engine::FileType;
-use std::time::Instant;
-
 #[derive(Debug, Clone)]
 pub struct FileItem {
     pub original_path: String,
@@ -45,6 +42,7 @@ pub struct ProcessingStats {
 pub struct UndoOperation {
     pub original_path: String,
     pub renamed_path: String,
+    #[allow(dead_code)]
     pub original_name: String,
     pub new_name: String,
 }

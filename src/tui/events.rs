@@ -7,7 +7,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    Frame, Terminal,
+    Terminal,
 };
 
 use super::app::App;
