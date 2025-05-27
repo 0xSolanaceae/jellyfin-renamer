@@ -63,7 +63,7 @@ impl RenameEngine {
             movie_pattern,
             config,
         })
-    }pub async fn fetch_imdb_titles(&mut self) -> Result<()> {
+    }    pub async fn fetch_imdb_titles(&mut self) -> Result<()> {
         if !self.config.use_imdb {
             return Ok(());
         }
@@ -71,14 +71,9 @@ impl RenameEngine {
         let imdb_id = self.config.imdb_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("IMDb ID is required when use_imdb is true"))?;
 
-        println!("Fetching episode titles for {} from IMDb...", self.config.season);
-        
         let titles = scrape_imdb_episodes(imdb_id, Some(self.config.season_num)).await?;
         
-        if titles.is_empty() {
-            println!("Could not fetch episode titles. Proceeding without IMDb titles.");
-        } else {
-            println!("Fetched {} episode titles.", titles.len());
+        if !titles.is_empty() {
             self.imdb_titles = titles;
         }
 

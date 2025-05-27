@@ -59,9 +59,10 @@ pub struct App {
     pub directory_input: String,
     pub season_input: String,
     pub year_input: String,
-    pub imdb_id_input: String,    pub use_imdb: bool,
-    pub undo_operations: Vec<UndoOperation>, // Store undo operations
+    pub imdb_id_input: String,    pub use_imdb: bool,    pub undo_operations: Vec<UndoOperation>, // Store undo operations
     pub needs_refresh: bool, // Flag to trigger refresh when season changes
+    pub status_message: Option<String>, // Status message for user feedback
+    pub status_message_time: Option<Instant>, // When the status message was set
 }
 
 #[derive(Debug, PartialEq)]
@@ -109,9 +110,10 @@ impl App {    pub fn new() -> Self {
             directory_input: String::new(),
             season_input: String::new(),
             year_input: String::new(),
-            imdb_id_input: String::new(),            use_imdb: false,
-            undo_operations: Vec::new(),
+            imdb_id_input: String::new(),            use_imdb: false,            undo_operations: Vec::new(),
             needs_refresh: false,
+            status_message: None,
+            status_message_time: None,
         }
     }pub fn with_directory(directory: String) -> Self {
         let mut app = Self::new();
@@ -307,10 +309,22 @@ impl App {    pub fn new() -> Self {
 
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }    pub fn toggle_preview(&mut self) {
+        self.show_preview = !self.show_preview;
     }
 
-    pub fn toggle_preview(&mut self) {
-        self.show_preview = !self.show_preview;
+    pub fn set_status_message(&mut self, message: String) {
+        self.status_message = Some(message);
+        self.status_message_time = Some(Instant::now());
+    }
+
+    pub fn clear_status_message_if_expired(&mut self) {
+        if let (Some(_), Some(time)) = (&self.status_message, self.status_message_time) {
+            if time.elapsed() > Duration::from_secs(3) {
+                self.status_message = None;
+                self.status_message_time = None;
+            }
+        }
     }
 
     pub fn handle_config_input(&mut self, c: char) {
@@ -587,20 +601,21 @@ impl App {    pub fn new() -> Self {
         }
 
         Ok(())
-    }
-
-    pub async fn undo_renames(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    }    pub async fn undo_renames(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if self.undo_operations.is_empty() {
             return Ok(());
         }
 
+        let mut undo_errors = Vec::new();
+        let mut successful_undos = 0;
+
         for undo_op in self.undo_operations.iter().rev() {
             match fs::rename(&undo_op.renamed_path, &undo_op.original_path) {
                 Ok(_) => {
-                    println!("Undid: {} -> {}", undo_op.new_name, undo_op.original_name);
+                    successful_undos += 1;
                 }
                 Err(e) => {
-                    println!("Failed to undo {}: {}", undo_op.new_name, e);
+                    undo_errors.push(format!("Failed to undo {}: {}", undo_op.new_name, e));
                 }
             }
         }
@@ -608,21 +623,42 @@ impl App {    pub fn new() -> Self {
         // Clear undo operations after performing undo
         self.undo_operations.clear();
         
-        // Reset the file statuses back to pending so they show the original names
+        // Reset the file statuses and names properly
         for file in &mut self.files {
             if file.status == ProcessingStatus::Success {
                 file.status = ProcessingStatus::Pending;
-                // Swap names back
-                let temp = file.new_name.clone();
+                // Reset new_name back to original_name (don't swap!)
                 file.new_name = file.original_name.clone();
-                file.original_name = temp;
+                // Clear episode info
+                file.episode_number = 0;
+                file.episode_title.clear();
+                file.error_message = None;
             }
         }
         
+        // Reset processing state
         self.finished = false;
+        self.current_processing = None;
+        self.processing_progress = 0.0;
         self.stats.successful = 0;
         self.stats.failed = 0;
         self.stats.processed = 0;
+        
+        // Ensure list selection is valid
+        if !self.files.is_empty() {
+            let selected = self.list_state.selected().unwrap_or(0);
+            if selected >= self.files.len() {
+                self.list_state.select(Some(0));
+                self.selected_index = 0;
+            }
+        }
+        
+        // Set status message based on results
+        if undo_errors.is_empty() {
+            self.set_status_message(format!("Successfully undid {} rename operations", successful_undos));
+        } else {
+            self.set_status_message(format!("Undid {} operations with {} errors", successful_undos, undo_errors.len()));
+        }
         
         Ok(())
     }
@@ -668,6 +704,9 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
+        // Clear expired status messages
+        app.clear_status_message_if_expired();
+        
         terminal.draw(|f| ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -1167,7 +1206,10 @@ fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         .split(area);
 
     // Progress bar
-    let progress_label = if app.finished {
+    let progress_label = if let Some(status_msg) = &app.status_message {
+        // Show status message instead of progress when available
+        status_msg.clone()
+    } else if app.finished {
         format!("Complete! {} successful, {} failed", app.stats.successful, app.stats.failed)
     } else if app.current_processing.is_some() {
         format!("Processing... {}/{}", app.stats.processed + 1, app.stats.total)
@@ -1175,13 +1217,19 @@ fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         format!("Ready to process {} files", app.stats.total)
     };
 
+    let progress_style = if app.status_message.is_some() {
+        Style::default().fg(Color::Cyan) // Use different color for status messages
+    } else {
+        Style::default().fg(Color::Green)
+    };
+
     let progress = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title("Progress"))
-        .gauge_style(Style::default().fg(Color::Green))
+        .gauge_style(progress_style)
         .percent((app.processing_progress * 100.0) as u16)
         .label(progress_label);
 
-    f.render_widget(progress, chunks[0]);    // Controls hint
+    f.render_widget(progress, chunks[0]);// Controls hint
     let controls_text = if app.finished && !app.undo_operations.is_empty() {
         "Press u to undo, h for help, q to quit"
     } else {
