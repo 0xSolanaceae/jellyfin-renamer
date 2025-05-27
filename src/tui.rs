@@ -623,16 +623,43 @@ impl App {    pub fn new() -> Self {
         // Clear undo operations after performing undo
         self.undo_operations.clear();
         
-        // Reset the file statuses and names properly
+        // Reset ALL file statuses and names properly (not just successful ones)
         for file in &mut self.files {
-            if file.status == ProcessingStatus::Success {
+            // Reset status to pending for all files that were processed
+            if file.status == ProcessingStatus::Success || file.status == ProcessingStatus::Error || file.status == ProcessingStatus::Skipped {
                 file.status = ProcessingStatus::Pending;
-                // Reset new_name back to original_name (don't swap!)
-                file.new_name = file.original_name.clone();
-                // Clear episode info
-                file.episode_number = 0;
-                file.episode_title.clear();
-                file.error_message = None;
+            }
+            // Reset new_name back to original_name for all files
+            file.new_name = file.original_name.clone();
+            // Clear episode info for all files
+            file.episode_number = 0;
+            file.episode_title.clear();
+            file.error_message = None;
+        }
+        
+        // Reprocess files with the rename engine to recalculate new names
+        if let Some(engine) = &self.rename_engine {
+            for file_item in &mut self.files {
+                let path = std::path::Path::new(&file_item.original_path);
+                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    // Try different processing methods to recalculate new names
+                    if let Some(file_rename) = engine.process_file_standard(filename)? {
+                        file_item.new_name = file_rename.new_name;
+                        file_item.episode_number = file_rename.episode_number;
+                        file_item.episode_title = file_rename.episode_title;
+                        file_item.status = if file_rename.needs_rename { ProcessingStatus::Pending } else { ProcessingStatus::Skipped };
+                    } else if let Some(file_rename) = engine.process_file_flexible(filename)? {
+                        file_item.new_name = file_rename.new_name;
+                        file_item.episode_number = file_rename.episode_number;
+                        file_item.episode_title = file_rename.episode_title;
+                        file_item.status = if file_rename.needs_rename { ProcessingStatus::Pending } else { ProcessingStatus::Skipped };
+                    } else if let Some(file_rename) = engine.process_file_movie(filename)? {
+                        file_item.new_name = file_rename.new_name;
+                        file_item.episode_number = file_rename.episode_number;
+                        file_item.episode_title = file_rename.episode_title;
+                        file_item.status = if file_rename.needs_rename { ProcessingStatus::Pending } else { ProcessingStatus::Skipped };
+                    }
+                }
             }
         }
         
