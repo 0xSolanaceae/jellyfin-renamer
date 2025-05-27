@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::rename_engine::{self, RenameConfig, RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory};
+use crate::rename_engine::{RenameConfig, RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory, extract_season_from_filename};
 
 #[derive(Debug, Clone)]
 pub struct FileItem {
@@ -113,9 +113,7 @@ impl App {
             imdb_id_input: String::new(),
             use_imdb: false,
         }
-    }
-
-    pub fn with_directory(directory: String) -> Self {
+    }    pub fn with_directory(directory: String) -> Self {
         let mut app = Self::new();
         app.directory_input = directory.clone();
         
@@ -137,6 +135,7 @@ impl App {
         // Convert selected file paths to FileItems
         let mut files = Vec::new();
         let mut directory = None;
+        let mut detected_season = None;
         
         for file_path in selected_files {
             let path = std::path::Path::new(&file_path);
@@ -147,6 +146,11 @@ impl App {
                 }
                 
                 if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                    // Try to detect season from filename if not already detected
+                    if detected_season.is_none() {
+                        detected_season = extract_season_from_filename(filename);
+                    }
+                    
                     files.push(FileItem {
                         original_path: file_path.clone(),
                         original_name: filename.to_string(),
@@ -167,14 +171,28 @@ impl App {
         if let Some(dir) = directory {
             app.directory_input = dir.clone();
             
-            // Try to auto-detect season from directory name
-            if let Some(dir_path) = std::path::Path::new(&dir).file_name() {
-                if let Some(dir_name) = dir_path.to_str() {
-                    if let Some(season_num) = extract_season_from_directory(dir_name) {
-                        app.season_input = format!("S{:02}", season_num);
+            // Try to auto-detect season from directory name if not detected from filename
+            if detected_season.is_none() {
+                if let Some(dir_path) = std::path::Path::new(&dir).file_name() {
+                    if let Some(dir_name) = dir_path.to_str() {
+                        detected_season = extract_season_from_directory(dir_name);
                     }
                 }
             }
+            
+            // Also try parent directory if still not found
+            if detected_season.is_none() {
+                if let Some(parent_path) = std::path::Path::new(&dir).parent() {
+                    if let Some(parent_dir) = parent_path.file_name().and_then(|f| f.to_str()) {
+                        detected_season = extract_season_from_directory(parent_dir);
+                    }
+                }
+            }
+        }
+        
+        // Set detected season if found
+        if let Some(season_num) = detected_season {
+            app.season_input = format!("S{:02}", season_num);
         }
         
         // Skip directory configuration if we have pre-selected files
@@ -332,10 +350,20 @@ impl App {
                 if !self.directory_input.is_empty() {
                     self.config_input_mode = ConfigInputMode::Season;
                 }
-            }
-            ConfigInputMode::Season => {
+            }            ConfigInputMode::Season => {
                 if !self.season_input.is_empty() {
-                    self.config_input_mode = ConfigInputMode::Year;
+                    // Validate season input - it should be either "S##" format or just a number
+                    let is_valid = if self.season_input.starts_with('S') || self.season_input.starts_with('s') {
+                        let num_part = &self.season_input[1..];
+                        num_part.parse::<u32>().is_ok()
+                    } else {
+                        self.season_input.parse::<u32>().is_ok()
+                    };
+                    
+                    if is_valid {
+                        self.config_input_mode = ConfigInputMode::Year;
+                    }
+                    // If invalid, stay in Season mode (user needs to fix it)
                 }
             }
             ConfigInputMode::Year => {
@@ -622,25 +650,43 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     Style::default().fg(Color::Gray)
                 }),
         );
-    f.render_widget(directory_input, form_chunks[0]);
-
-    // Season input
+    f.render_widget(directory_input, form_chunks[0]);    // Season input
     let season_style = if app.config_input_mode == ConfigInputMode::Season {
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
     
-    let season_input = Paragraph::new(app.season_input.as_str())
+    let season_title = if !app.season_input.is_empty() {
+        "Season (auto-detected) - Press Enter to continue or edit"
+    } else {
+        "Season (REQUIRED - e.g., S01 or 1)"
+    };
+    
+    let season_display = if app.season_input.is_empty() {
+        "[Enter season number]".to_string()
+    } else {
+        app.season_input.clone()
+    };
+    
+    let season_input = Paragraph::new(season_display.as_str())
         .style(season_style)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Season (e.g., S01 or 1)")
+                .title(season_title)
                 .border_style(if app.config_input_mode == ConfigInputMode::Season {
-                    Style::default().fg(Color::Yellow)
+                    if app.season_input.is_empty() {
+                        Style::default().fg(Color::Red) // Red border if empty and focused
+                    } else {
+                        Style::default().fg(Color::Green) // Green border if auto-detected and focused
+                    }
                 } else {
-                    Style::default().fg(Color::Gray)
+                    if app.season_input.is_empty() {
+                        Style::default().fg(Color::Red) // Red border if empty
+                    } else {
+                        Style::default().fg(Color::Green) // Green border if filled
+                    }
                 }),
         );
     f.render_widget(season_input, form_chunks[1]);
@@ -728,12 +774,16 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     .border_style(Style::default().fg(Color::Green)),
             );
         f.render_widget(confirm, form_chunks[5]);
-    }
-
-    // Instructions
+    }    // Instructions
     let instructions = match app.config_input_mode {
         ConfigInputMode::Directory => "Enter the directory path containing your video files",
-        ConfigInputMode::Season => "Enter season number (auto-detected if possible)",
+        ConfigInputMode::Season => {
+            if app.season_input.is_empty() {
+                "Season number is REQUIRED (e.g., S01, S1, 1, or 01)"
+            } else {
+                "Season auto-detected! Press Enter to continue or type to edit"
+            }
+        },
         ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
         ConfigInputMode::ImdbChoice => "Would you like to fetch episode titles from IMDb?",
         ConfigInputMode::ImdbId => "Enter the IMDb series ID (found in the URL)",

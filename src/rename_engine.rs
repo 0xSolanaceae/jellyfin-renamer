@@ -262,12 +262,55 @@ pub fn sanitize_filename(filename: &str) -> String {
 
 // Helper function to extract season number from directory name
 pub fn extract_season_from_directory(dir_name: &str) -> Option<u32> {
-    let re = Regex::new(r"s(\d+)").unwrap();
-    if let Some(captures) = re.captures(&dir_name.to_lowercase()) {
-        captures.get(1)?.as_str().parse().ok()
-    } else {
-        None
+    // Try multiple patterns for season detection
+    let patterns = [
+        r"s(?:eason\s*)?(\d+)",           // s1, season 1, s01, season 01
+        r"(?:season\s+)(\d+)",            // season 1, season 01
+        r"(\d+)(?:st|nd|rd|th)\s*season", // 1st season, 2nd season
+        r"series\s*(\d+)",                // series 1, series 01
+    ];
+    
+    let dir_lower = dir_name.to_lowercase();
+    
+    for pattern in &patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(captures) = re.captures(&dir_lower) {
+                if let Some(season_match) = captures.get(1) {
+                    if let Ok(season_num) = season_match.as_str().parse::<u32>() {
+                        return Some(season_num);
+                    }
+                }
+            }
+        }
     }
+    
+    None
+}
+
+// Helper function to extract season number from file name
+pub fn extract_season_from_filename(filename: &str) -> Option<u32> {
+    // Try to extract season from standard patterns in filename
+    let patterns = [
+        r"S(\d{1,2})E\d{2}",              // S01E01, S1E01
+        r"(?:season\s*)?(\d+)x\d{2}",     // 1x01, season 1x01
+        r"s(\d+)e\d+",                    // s1e01, s01e01
+    ];
+    
+    let filename_lower = filename.to_lowercase();
+    
+    for pattern in &patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(captures) = re.captures(&filename_lower) {
+                if let Some(season_match) = captures.get(1) {
+                    if let Ok(season_num) = season_match.as_str().parse::<u32>() {
+                        return Some(season_num);
+                    }
+                }
+            }
+        }
+    }
+    
+    None
 }
 
 // IMDb scraping functionality
