@@ -474,6 +474,42 @@ impl RenameEngine {
                 error_message: Some(e.to_string()),
             }
         }    }
+
+    // Process a file with a specific year (for multiple movies with individual years)
+    pub fn process_file_with_year(&self, filename: &str, year: Option<String>) -> Result<Option<FileRename>> {
+        // Create a temporary config with the specific year
+        let mut temp_config = self.config.clone();
+        temp_config.year = year;
+        
+        // Create a temporary engine with the updated config
+        let temp_engine = RenameEngine {
+            config: temp_config,
+            imdb_titles: self.imdb_titles.clone(),
+            standard_pattern: self.standard_pattern.clone(),
+            flexible_pattern: self.flexible_pattern.clone(),
+            movie_pattern: self.movie_pattern.clone(),
+        };
+        
+        // Try different processing methods based on file type
+        match self.config.file_type {
+            FileType::TvShow => {
+                // For TV shows, try standard then flexible patterns
+                if let Some(file_rename) = temp_engine.process_file_standard(filename)? {
+                    return Ok(Some(file_rename));
+                } else if let Some(file_rename) = temp_engine.process_file_flexible(filename)? {
+                    return Ok(Some(file_rename));
+                }
+            },
+            FileType::Movie => {
+                // For movies, use movie processing
+                if let Some(file_rename) = temp_engine.process_file_movie(filename)? {
+                    return Ok(Some(file_rename));
+                }
+            }
+        }
+        
+        Ok(None)
+    }
 }
 
 // Helper function to sanitize filenames
