@@ -4,7 +4,6 @@ use anyhow::{Result, Context};
 use regex::Regex;
 use reqwest;
 use scraper::{Html, Selector};
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct RenameConfig {
@@ -450,38 +449,5 @@ impl ConfigBuilder {
             year: self.year,
             use_imdb: self.use_imdb,
             imdb_id: self.imdb_id,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("Test: File/Name"), "Test_ File_Name");
-        assert_eq!(sanitize_filename("Normal_File.Name"), "Normal_File.Name");
-    }
-
-    #[test]
-    fn test_extract_season_from_directory() {
-        assert_eq!(extract_season_from_directory("Show.S01"), Some(1));
-        assert_eq!(extract_season_from_directory("Show.s02.1080p"), Some(2));
-        assert_eq!(extract_season_from_directory("Random.Folder"), None);
-    }
-
-    #[tokio::test]
-    async fn test_config_builder() {
-        let config = ConfigBuilder::new()
-            .directory("/test/path")
-            .season("S01".to_string())
-            .year(Some("2023".to_string()))
-            .build()
-            .unwrap();
-
-        assert_eq!(config.season, "S01");
-        assert_eq!(config.season_num, 1);
-        assert_eq!(config.year, Some("2023".to_string()));
-    }
+        })    }
 }

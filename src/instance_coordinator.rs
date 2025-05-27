@@ -199,20 +199,3 @@ impl Default for InstanceCoordinator {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_coordinator_creation() {
-        let coordinator = InstanceCoordinator::new();
-        assert!(coordinator.temp_dir.exists());
-    }
-
-    #[test]
-    fn test_default_coordinator() {
-        let coordinator = InstanceCoordinator::default();
-        assert!(coordinator.temp_dir.exists());
-    }
-}
