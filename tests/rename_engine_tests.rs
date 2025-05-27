@@ -125,7 +125,7 @@ async fn test_rename_engine_integration() {
     let mut engine = RenameEngine::new(config).unwrap();
     
     match engine.fetch_imdb_titles().await {
-        Ok(_) => println!("✓ RenameEngine successfully fetched IMDb titles"),
-        Err(e) => println!("⚠ RenameEngine IMDb fetch error: {}", e),
+        Ok(_) => println!("RenameEngine successfully fetched IMDb titles"),
+        Err(e) => println!("RenameEngine IMDb fetch error: {}", e),
     }
 }
