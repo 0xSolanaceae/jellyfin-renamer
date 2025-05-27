@@ -19,7 +19,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::rename_engine::{RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory, extract_season_from_filename};
+use crate::rename_engine::{RenameEngine, FileRename, ConfigBuilder, extract_season_from_directory, extract_season_from_filename, FileType};
 
 #[derive(Debug, Clone)]
 pub struct FileItem {
@@ -51,7 +51,8 @@ pub struct App {
     pub show_help: bool,
     pub show_preview: bool,
     pub show_config: bool,
-    pub config_input_mode: ConfigInputMode,    pub scroll_state: ScrollbarState,
+    pub config_input_mode: ConfigInputMode,
+    pub scroll_state: ScrollbarState,
     pub start_time: Option<Instant>,
     pub finished: bool,
     pub stats: ProcessingStats,
@@ -59,14 +60,18 @@ pub struct App {
     pub directory_input: String,
     pub season_input: String,
     pub year_input: String,
-    pub imdb_id_input: String,    pub use_imdb: bool,    pub undo_operations: Vec<UndoOperation>, // Store undo operations
+    pub imdb_id_input: String,
+    pub use_imdb: bool,
+    pub undo_operations: Vec<UndoOperation>, // Store undo operations
     pub needs_refresh: bool, // Flag to trigger refresh when season changes
     pub status_message: Option<String>, // Status message for user feedback
     pub status_message_time: Option<Instant>, // When the status message was set
+    pub file_type: FileType, // Whether processing TV shows or movies
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigInputMode {
+    FileType,
     Directory,
     Season,
     Year,
@@ -101,7 +106,7 @@ impl App {    pub fn new() -> Self {
             processing_progress: 0.0,
             show_help: false,
             show_preview: true,
-            show_config: true,            config_input_mode: ConfigInputMode::Directory,
+            show_config: true,            config_input_mode: ConfigInputMode::FileType,
             scroll_state: ScrollbarState::default(),
             start_time: None,
             finished: false,
@@ -114,19 +119,14 @@ impl App {    pub fn new() -> Self {
             needs_refresh: false,
             status_message: None,
             status_message_time: None,
+            file_type: FileType::TvShow, // Default to TV shows
         }
-    }pub fn with_directory(directory: String) -> Self {
+    }    pub fn with_directory(directory: String) -> Self {
         let mut app = Self::new();
         app.directory_input = directory.clone();
         
-        // Try to auto-detect season from directory name
-        if let Some(dir_path) = std::path::Path::new(&directory).file_name() {
-            if let Some(dir_name) = dir_path.to_str() {
-                if let Some(season_num) = extract_season_from_directory(dir_name) {
-                    app.season_input = format!("S{:02}", season_num);
-                }
-            }
-        }
+        // Don't auto-detect season until file type is selected
+        // Season detection will happen when user selects TV shows
         
         app
     }
@@ -167,46 +167,19 @@ impl App {    pub fn new() -> Self {
         }
         
         app.files = files;
-        app.stats.total = app.files.len();
-        
-        // Set directory input from the first file's directory
+        app.stats.total = app.files.len();        // Set directory input from the first file's directory
         if let Some(dir) = directory {
             app.directory_input = dir.clone();
             
-            // Try to auto-detect season from directory name if detected from filename
-            if detected_season.is_none() {
-                if let Some(dir_path) = std::path::Path::new(&dir).file_name() {
-                    if let Some(dir_name) = dir_path.to_str() {
-                        detected_season = extract_season_from_directory(dir_name);
-                    }
-                }
-            }
-            
-            // Also try parent directory if still not found
-            if detected_season.is_none() {
-                if let Some(parent_path) = std::path::Path::new(&dir).parent() {
-                    if let Some(parent_dir) = parent_path.file_name().and_then(|f| f.to_str()) {
-                        detected_season = extract_season_from_directory(parent_dir);
-                    }
-                }
-            }        }
-          // Set detected season if found
-        if let Some(season_num) = detected_season {
-            app.season_input = format!("S{:02}", season_num);
-        } else if app.files.len() == 1 {
-            // For single files, if no season was detected, default to S01
-            app.season_input = "S01".to_string();
+            // Don't auto-detect season until file type is selected
+            // Season detection will happen when user selects TV shows
         }
-          // Skip directory configuration if we have pre-selected files
+        
+        // Skip directory configuration if we have pre-selected files
         if !app.files.is_empty() {
-            // For single file, skip directory and season input (auto-detected) and go directly to year (required)
-            // For multiple files, start with directory input
-            if app.files.len() == 1 {
-                app.config_input_mode = ConfigInputMode::Year;
-                app.show_config = true; // Ensure config screen is shown for year input
-            } else {
-                app.config_input_mode = ConfigInputMode::Directory;
-            }
+            // For single file, skip to file type choice, then go to year
+            // For multiple files, skip to file type choice then continue with full config
+            app.config_input_mode = ConfigInputMode::FileType;
         }
         
         app
@@ -237,32 +210,44 @@ impl App {    pub fn new() -> Self {
         }
         Ok(())
     }    pub async fn create_rename_engine(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Ensure season input is properly formatted
-        if !self.season_input.starts_with('S') && !self.season_input.starts_with('s') {
-            // Convert raw number to S format (e.g., "2" to "S02")
-            if let Ok(season_num) = self.season_input.parse::<u32>() {
-                self.season_input = format!("S{:02}", season_num);
+        // Ensure season input is properly formatted for TV shows
+        if self.file_type == FileType::TvShow {
+            if !self.season_input.starts_with('S') && !self.season_input.starts_with('s') {
+                // Convert raw number to S format (e.g., "2" to "S02")
+                if let Ok(season_num) = self.season_input.parse::<u32>() {
+                    self.season_input = format!("S{:02}", season_num);
+                }
             }
         }
         
         let config = ConfigBuilder::new()
             .directory(&self.directory_input)
-            .season(self.season_input.clone()) // This will set both season and season_num in the config
-            .year(if self.files.len() == 1 { 
-                // For single files, year is required
-                Some(self.year_input.clone()) 
-            } else if self.year_input.is_empty() { 
-                // For multiple files, year is optional
-                None 
-            } else { 
-                Some(self.year_input.clone()) 
-            })            .imdb(if self.files.len() > 1 && self.use_imdb && !self.imdb_id_input.is_empty() { 
-                // Only enable IMDb for multiple files
-                Some(self.imdb_id_input.clone()) 
-            } else { 
-                None 
-            })
-            .build()?;
+            .file_type(self.file_type.clone());
+        
+        let config = if self.file_type == FileType::TvShow {
+            config.season(self.season_input.clone()) // This will set both season and season_num in the config
+        } else {
+            config
+        };
+        
+        let config = if self.files.len() == 1 { 
+            // For single files, year is required
+            config.year(Some(self.year_input.clone()))
+        } else if self.year_input.is_empty() { 
+            // For multiple files, year is optional
+            config.year(None)
+        } else { 
+            config.year(Some(self.year_input.clone()))
+        };
+        
+        let config = if self.file_type == FileType::TvShow && self.files.len() > 1 && self.use_imdb && !self.imdb_id_input.is_empty() { 
+            // Only enable IMDb for multiple TV show files
+            config.imdb(Some(self.imdb_id_input.clone()))
+        } else { 
+            config.imdb(None)
+        };
+        
+        let config = config.build()?;
 
         let mut engine = RenameEngine::new(config)?;
         engine.fetch_imdb_titles().await?;
@@ -325,10 +310,18 @@ impl App {    pub fn new() -> Self {
                 self.status_message_time = None;
             }
         }
-    }
-
-    pub fn handle_config_input(&mut self, c: char) {
-        match self.config_input_mode {
+    }    pub fn handle_config_input(&mut self, c: char) {
+        match self.config_input_mode {            ConfigInputMode::FileType => {
+                if c == 't' || c == 'T' {
+                    self.file_type = FileType::TvShow;
+                    // Auto-detect season when TV shows are selected
+                    self.auto_detect_season_for_tv_shows();
+                    self.advance_config_step();
+                } else if c == 'm' || c == 'M' {
+                    self.file_type = FileType::Movie;
+                    self.advance_config_step();
+                }
+            }
             ConfigInputMode::Directory => {
                 if c == '\n' || c == '\r' {
                     self.advance_config_step();
@@ -390,15 +383,29 @@ impl App {    pub fn new() -> Self {
             }
             _ => {}
         }
-    }    pub fn advance_config_step(&mut self) {
+    }pub fn advance_config_step(&mut self) {
         match self.config_input_mode {
+            ConfigInputMode::FileType => {
+                self.config_input_mode = ConfigInputMode::Directory;
+            }
             ConfigInputMode::Directory => {
                 if !self.directory_input.is_empty() {
-                    // For single files, skip season input entirely and go to year (already auto-detected)
-                    if self.files.len() == 1 {
-                        self.config_input_mode = ConfigInputMode::Year;
+                    // Check if we're doing TV shows or movies to determine next step
+                    if self.file_type == FileType::TvShow {
+                        // For TV shows, season is required
+                        if self.files.len() == 1 {
+                            // For single files, skip season input if auto-detected and go to year
+                            if !self.season_input.is_empty() {
+                                self.config_input_mode = ConfigInputMode::Year;
+                            } else {
+                                self.config_input_mode = ConfigInputMode::Season;
+                            }
+                        } else {
+                            self.config_input_mode = ConfigInputMode::Season;
+                        }
                     } else {
-                        self.config_input_mode = ConfigInputMode::Season;
+                        // For movies, skip season and go directly to year
+                        self.config_input_mode = ConfigInputMode::Year;
                     }
                 }
             }
@@ -419,13 +426,16 @@ impl App {    pub fn new() -> Self {
                     // If invalid, stay in Season mode (user needs to fix it)
                 }
             }            ConfigInputMode::Year => {
-                // For single files, year is required
-                if self.files.len() == 1 && self.year_input.is_empty() {
+                // For movies, year is optional but recommended
+                // For single TV episodes, year is required
+                let year_required = self.file_type == FileType::TvShow && self.files.len() == 1;
+                
+                if year_required && self.year_input.is_empty() {
                     // Stay in Year mode if it's empty and required
                     return;
                 }
                 
-                // Validate year input - it should be a valid 4-digit year
+                // Validate year input if not empty
                 if !self.year_input.is_empty() {
                     if let Ok(year) = self.year_input.parse::<u32>() {
                         if year < 1900 || year > 2100 {
@@ -438,11 +448,12 @@ impl App {    pub fn new() -> Self {
                     }
                 }
                 
-                // For single files, skip IMDb choice (not applicable for single files)
-                if self.files.len() == 1 {
-                    self.config_input_mode = ConfigInputMode::Confirm;
-                } else {
+                // For TV shows with multiple files, go to IMDb choice
+                // For movies or single TV episodes, skip to confirm
+                if self.file_type == FileType::TvShow && self.files.len() > 1 {
                     self.config_input_mode = ConfigInputMode::ImdbChoice;
+                } else {
+                    self.config_input_mode = ConfigInputMode::Confirm;
                 }
             }
             ConfigInputMode::ImdbChoice => {
@@ -689,6 +700,52 @@ impl App {    pub fn new() -> Self {
         
         Ok(())
     }
+
+    // Auto-detect season information when TV shows are selected
+    pub fn auto_detect_season_for_tv_shows(&mut self) {
+        if self.file_type != FileType::TvShow {
+            return;
+        }
+        
+        let mut detected_season = None;
+        
+        // Try to detect season from selected files first
+        if !self.files.is_empty() {
+            for file in &self.files {
+                if let Some(filename) = std::path::Path::new(&file.original_path).file_name().and_then(|f| f.to_str()) {
+                    if let Some(season_num) = extract_season_from_filename(filename) {
+                        detected_season = Some(season_num);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If no season detected from files, try directory name
+        if detected_season.is_none() && !self.directory_input.is_empty() {
+            if let Some(dir_path) = std::path::Path::new(&self.directory_input).file_name() {
+                if let Some(dir_name) = dir_path.to_str() {
+                    detected_season = extract_season_from_directory(dir_name);
+                }
+            }
+            
+            // Also try parent directory if still not found
+            if detected_season.is_none() {
+                if let Some(parent_path) = std::path::Path::new(&self.directory_input).parent() {
+                    if let Some(parent_dir) = parent_path.file_name().and_then(|f| f.to_str()) {
+                        detected_season = extract_season_from_directory(parent_dir);
+                    }
+                }
+            }
+        }
+        
+        // Set detected season or default to S01
+        if let Some(season_num) = detected_season {
+            self.season_input = format!("S{:02}", season_num);
+        } else if self.season_input.is_empty() {
+            self.season_input = "S01".to_string();
+        }
+    }
 }
 
 pub async fn run_tui(directory: Option<String>, selected_files: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -868,32 +925,68 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                 .style(Style::default().fg(Color::White))
                 .border_style(Style::default().fg(Color::Cyan)),
         );
-    f.render_widget(header, chunks[0]);    // Configuration form - adjust constraints based on file count
+    f.render_widget(header, chunks[0]);    // Configuration form - adjust constraints based on file count and file type
     let has_multiple_files = app.files.len() > 1;
-    let form_constraints = if has_multiple_files {
-        // Multiple files: show directory, season, IMDb choice, IMDb ID, confirm
-        vec![
-            Constraint::Length(3), // Directory
-            Constraint::Length(3), // Season
-            Constraint::Length(3), // IMDb choice
-            Constraint::Length(3), // IMDb ID
-            Constraint::Length(3), // Confirm
-            Constraint::Min(1),    // Remaining space
-        ]
-    } else {
-        // Single file: show directory, year (required), confirm (no IMDb options)
-        vec![
-            Constraint::Length(3), // Directory
-            Constraint::Length(3), // Year (required)
-            Constraint::Length(3), // Confirm
-            Constraint::Min(1),    // Remaining space
-        ]
-    };
+    let is_tv_show = app.file_type == FileType::TvShow;
+    
+    let mut form_constraints = vec![
+        Constraint::Length(3), // File type
+        Constraint::Length(3), // Directory
+    ];
+    
+    // Add constraints based on file type and count
+    if is_tv_show {
+        form_constraints.push(Constraint::Length(3)); // Season (for TV shows)
+    }
+    
+    if (is_tv_show && app.files.len() == 1) || (!is_tv_show) {
+        form_constraints.push(Constraint::Length(3)); // Year (required for single TV episodes or movies)
+    }
+      if is_tv_show && has_multiple_files {
+        form_constraints.push(Constraint::Length(3)); // IMDb choice (for multiple TV episodes)
+        if app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId {
+            form_constraints.push(Constraint::Length(3)); // IMDb ID
+        }
+    }
+    
+    form_constraints.push(Constraint::Length(3)); // Confirm
+    form_constraints.push(Constraint::Min(1));    // Remaining space
     
     let form_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(form_constraints)
         .split(chunks[1]);
+
+    let mut current_chunk_index = 0;
+
+    // File type selection
+    let file_type_text = if app.config_input_mode == ConfigInputMode::FileType {
+        "Press T for TV Shows, M for Movies"
+    } else {
+        match app.file_type {
+            FileType::TvShow => "TV Shows",
+            FileType::Movie => "Movies",
+        }
+    };
+    
+    let file_type_input = Paragraph::new(file_type_text)
+        .style(if app.config_input_mode == ConfigInputMode::FileType {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("File Type")
+                .border_style(if app.config_input_mode == ConfigInputMode::FileType {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().fg(Color::Green)
+                }),
+        );
+    f.render_widget(file_type_input, form_chunks[current_chunk_index]);
+    current_chunk_index += 1;
 
     // Directory input
     let directory_style = if app.config_input_mode == ConfigInputMode::Directory {
@@ -913,12 +1006,9 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                 } else {
                     Style::default().fg(Color::Gray)
                 }),
-        );    f.render_widget(directory_input, form_chunks[0]);
-
-    let mut current_chunk_index = 1;
-
-    if has_multiple_files {
-        // Season input (only for multiple files)
+        );    f.render_widget(directory_input, form_chunks[current_chunk_index]);
+    current_chunk_index += 1;    if is_tv_show {
+        // Season input (only for TV shows)
         let season_style = if app.config_input_mode == ConfigInputMode::Season {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
@@ -959,18 +1049,25 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             );
         f.render_widget(season_input, form_chunks[current_chunk_index]);
         current_chunk_index += 1;
-    } else {
-        // Year input (only for single files, required)
+    }
+
+    // Year input logic
+    let show_year = (is_tv_show && app.files.len() == 1) || !is_tv_show;
+    if show_year {
         let year_style = if app.config_input_mode == ConfigInputMode::Year {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
         
-        let year_title = if app.year_input.is_empty() {
-            "Year (REQUIRED for single files)"
+        let year_title = if is_tv_show && app.files.len() == 1 {
+            if app.year_input.is_empty() {
+                "Year (REQUIRED for single TV episodes)"
+            } else {
+                "Year"
+            }
         } else {
-            "Year"
+            "Year (optional for movies)"
         };
         
         let year_display = if app.year_input.is_empty() {
@@ -979,6 +1076,8 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             app.year_input.clone()
         };
         
+        let year_required = is_tv_show && app.files.len() == 1;
+        
         let year_input = Paragraph::new(year_display.as_str())
             .style(year_style)
             .block(
@@ -986,23 +1085,23 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     .borders(Borders::ALL)
                     .title(year_title)
                     .border_style(if app.config_input_mode == ConfigInputMode::Year {
-                        if app.year_input.is_empty() {
-                            Style::default().fg(Color::Red) // Red border if empty and focused (required)
+                        if app.year_input.is_empty() && year_required {
+                            Style::default().fg(Color::Red) // Red border if empty and required
                         } else {
-                            Style::default().fg(Color::Yellow) // Yellow border if focused and filled
+                            Style::default().fg(Color::Yellow) // Yellow border if focused
                         }
                     } else {
-                        if app.year_input.is_empty() {
-                            Style::default().fg(Color::Red) // Red border if empty (required)
+                        if app.year_input.is_empty() && year_required {
+                            Style::default().fg(Color::Red) // Red border if empty and required
                         } else {
-                            Style::default().fg(Color::Green) // Green border if filled
+                            Style::default().fg(Color::Green) // Green border if filled or optional
                         }
                     }),
             );
         f.render_widget(year_input, form_chunks[current_chunk_index]);
         current_chunk_index += 1;
-    }    // IMDb choice (only for multiple files)
-    if has_multiple_files {
+    }    // IMDb choice (only for TV shows with multiple files)
+    if is_tv_show && has_multiple_files {
         let imdb_text = if app.config_input_mode == ConfigInputMode::ImdbChoice {
             "Press y for Yes, n for No"
         } else if app.use_imdb {
@@ -1029,8 +1128,8 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             );
         f.render_widget(imdb_choice, form_chunks[current_chunk_index]);
         current_chunk_index += 1;
-    }    // IMDb ID input (if needed and only for multiple files)
-    if has_multiple_files && (app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId) {
+    }    // IMDb ID input (if needed and only for TV shows with multiple files)
+    if is_tv_show && has_multiple_files && (app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId) {
         let imdb_style = if app.config_input_mode == ConfigInputMode::ImdbId {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
@@ -1073,6 +1172,7 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         f.render_widget(confirm, form_chunks[current_chunk_index]);
     }    // Instructions
     let instructions = match app.config_input_mode {
+        ConfigInputMode::FileType => "Choose file type: T for TV Shows, M for Movies",
         ConfigInputMode::Directory => "Enter the directory path containing your video files",
         ConfigInputMode::Season => {
             if app.season_input.is_empty() {
@@ -1082,8 +1182,8 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             }
         },
         ConfigInputMode::Year => {
-            if app.files.len() == 1 {
-                "Year is REQUIRED for single files (e.g., 2023)"
+            if app.file_type == FileType::TvShow && app.files.len() == 1 {
+                "Year is REQUIRED for single TV episodes (e.g., 2023)"
             } else {
                 "Enter year or leave blank (press Enter to skip)"
             }

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use jellyfin_rename::rename_engine::{
     sanitize_filename, extract_season_from_directory, scrape_imdb_episodes,
-    ConfigBuilder, RenameEngine
+    ConfigBuilder, RenameEngine, FileType
 };
 
 #[test]
@@ -23,6 +23,7 @@ fn test_extract_season_from_directory() {
 async fn test_config_builder() {
     let config = ConfigBuilder::new()
         .directory("/test/path")
+        .file_type(FileType::TvShow)
         .season("S01".to_string())
         .year(Some("2023".to_string()))
         .build()
@@ -115,6 +116,7 @@ async fn test_rename_engine_integration() {
     
     let config = ConfigBuilder::new()
         .directory(PathBuf::from("C:\\temp\\test"))
+        .file_type(FileType::TvShow)
         .season("S01".to_string())
         .imdb(Some("tt0903747".to_string())) // Breaking Bad
         .build()
