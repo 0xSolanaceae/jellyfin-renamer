@@ -86,7 +86,8 @@ impl RenameEngine {
 
         Ok(())
     }
-
+    
+    #[allow(dead_code)]
     pub fn get_imdb_titles(&self) -> &Vec<String> {
         &self.imdb_titles
     }    pub fn scan_directory(&self) -> Result<Vec<FileRename>> {
