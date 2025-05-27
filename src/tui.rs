@@ -187,8 +187,7 @@ impl App {    pub fn new() -> Self {
         if let Some(season_num) = detected_season {
             app.season_input = format!("S{:02}", season_num);
         }
-        
-        // Skip directory configuration if we have pre-selected files
+          // Skip directory configuration if we have pre-selected files
         if !app.files.is_empty() {
             app.config_input_mode = ConfigInputMode::Season;
         }
@@ -221,13 +220,15 @@ impl App {    pub fn new() -> Self {
             }
         }
         Ok(())
-    }
-
-    pub async fn create_rename_engine(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    }    pub async fn create_rename_engine(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let config = ConfigBuilder::new()
             .directory(&self.directory_input)
             .season(self.season_input.clone())
-            .year(if self.year_input.is_empty() { None } else { Some(self.year_input.clone()) })
+            .year(if self.year_input.is_empty() || self.files.len() > 1 { 
+                None 
+            } else { 
+                Some(self.year_input.clone()) 
+            })
             .imdb(if self.use_imdb && !self.imdb_id_input.is_empty() { 
                 Some(self.imdb_id_input.clone()) 
             } else { 
@@ -335,9 +336,7 @@ impl App {    pub fn new() -> Self {
             }
             _ => {}
         }
-    }
-
-    pub fn advance_config_step(&mut self) {
+    }    pub fn advance_config_step(&mut self) {
         match self.config_input_mode {
             ConfigInputMode::Directory => {
                 if !self.directory_input.is_empty() {
@@ -354,7 +353,12 @@ impl App {    pub fn new() -> Self {
                     };
                     
                     if is_valid {
-                        self.config_input_mode = ConfigInputMode::Year;
+                        // Skip year input if multiple files are selected
+                        if self.files.len() > 1 {
+                            self.config_input_mode = ConfigInputMode::ImdbChoice;
+                        } else {
+                            self.config_input_mode = ConfigInputMode::Year;
+                        }
                     }
                     // If invalid, stay in Season mode (user needs to fix it)
                 }
@@ -597,7 +601,7 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         .split(area);
 
     // Header
-    let header = Paragraph::new("🔧 Jellyfin Rename Tool - Configuration")
+    let header = Paragraph::new("Jellyfin Rename Tool - Configuration")
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         .alignment(Alignment::Center)
         .block(
@@ -608,17 +612,32 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         );
     f.render_widget(header, chunks[0]);
 
-    // Configuration form
+    // Configuration form - adjust constraints based on whether to show year input
+    let has_multiple_files = app.files.len() > 1;
+    let form_constraints = if has_multiple_files {
+        // Skip year input for multiple files
+        vec![
+            Constraint::Length(3), // Directory
+            Constraint::Length(3), // Season
+            Constraint::Length(3), // IMDb choice
+            Constraint::Length(3), // IMDb ID
+            Constraint::Length(3), // Confirm
+            Constraint::Min(1),    // Remaining space
+        ]
+    } else {
+        vec![
+            Constraint::Length(3), // Directory
+            Constraint::Length(3), // Season
+            Constraint::Length(3), // Year
+            Constraint::Length(3), // IMDb choice
+            Constraint::Length(3), // IMDb ID
+            Constraint::Min(1),    // Remaining space
+        ]
+    };
+    
     let form_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(1),
-        ])
+        .constraints(form_constraints)
         .split(chunks[1]);
 
     // Directory input
@@ -640,7 +659,9 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     Style::default().fg(Color::Gray)
                 }),
         );
-    f.render_widget(directory_input, form_chunks[0]);    // Season input
+    f.render_widget(directory_input, form_chunks[0]);
+
+    // Season input
     let season_style = if app.config_input_mode == ConfigInputMode::Season {
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
     } else {
@@ -681,26 +702,31 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         );
     f.render_widget(season_input, form_chunks[1]);
 
-    // Year input
-    let year_style = if app.config_input_mode == ConfigInputMode::Year {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-    
-    let year_input = Paragraph::new(app.year_input.as_str())
-        .style(year_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Year (optional)")
-                .border_style(if app.config_input_mode == ConfigInputMode::Year {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default().fg(Color::Gray)
-                }),
-        );
-    f.render_widget(year_input, form_chunks[2]);
+    let mut current_chunk_index = 2;
+
+    // Year input (only for single files)
+    if !has_multiple_files {
+        let year_style = if app.config_input_mode == ConfigInputMode::Year {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        
+        let year_input = Paragraph::new(app.year_input.as_str())
+            .style(year_style)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Year (optional)")
+                    .border_style(if app.config_input_mode == ConfigInputMode::Year {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    }),
+            );
+        f.render_widget(year_input, form_chunks[current_chunk_index]);
+        current_chunk_index += 1;
+    }
 
     // IMDb choice
     let imdb_text = if app.config_input_mode == ConfigInputMode::ImdbChoice {
@@ -727,7 +753,8 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                     Style::default().fg(Color::Gray)
                 }),
         );
-    f.render_widget(imdb_choice, form_chunks[3]);
+    f.render_widget(imdb_choice, form_chunks[current_chunk_index]);
+    current_chunk_index += 1;
 
     // IMDb ID input (if needed)
     if app.use_imdb || app.config_input_mode == ConfigInputMode::ImdbId {
@@ -749,22 +776,31 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                         Style::default().fg(Color::Gray)
                     }),
             );
-        f.render_widget(imdb_input, form_chunks[4]);
+        f.render_widget(imdb_input, form_chunks[current_chunk_index]);
+        current_chunk_index += 1;
     }
 
     // Confirm button
     if app.config_input_mode == ConfigInputMode::Confirm {
-        let confirm = Paragraph::new("Press ENTER to scan directory and start")
+        let confirm_text = if app.files.is_empty() {
+            "Press ENTER to scan directory and start"
+        } else {
+            "Press ENTER to process selected files"
+        };
+        
+        let confirm = Paragraph::new(confirm_text)
             .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Ready to Scan")
+                    .title("Ready to Process")
                     .border_style(Style::default().fg(Color::Green)),
             );
-        f.render_widget(confirm, form_chunks[5]);
-    }    // Instructions
+        f.render_widget(confirm, form_chunks[current_chunk_index]);
+    }
+
+    // Instructions
     let instructions = match app.config_input_mode {
         ConfigInputMode::Directory => "Enter the directory path containing your video files",
         ConfigInputMode::Season => {
@@ -773,7 +809,8 @@ fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
             } else {
                 "Season auto-detected! Press Enter to continue or type to edit"
             }
-        },        ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
+        },
+        ConfigInputMode::Year => "Enter year or leave blank (press Enter to skip)",
         ConfigInputMode::ImdbChoice => "Would you like to fetch episode titles from IMDb?",
         ConfigInputMode::ImdbId => "Enter the IMDb series ID (found in the URL)",
         ConfigInputMode::Confirm => "Review your settings and press Enter to continue",
@@ -827,11 +864,11 @@ fn render_main_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
 
 fn render_header(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let title = if app.finished {
-        "🎉 Jellyfin Rename Tool - Completed!"
+        "Jellyfin Rename Tool - Completed!"
     } else if app.current_processing.is_some() {
-        "⚡ Jellyfin Rename Tool - Processing..."
+        "Jellyfin Rename Tool - Processing..."
     } else {
-        "📁 Jellyfin Rename Tool"
+        "Jellyfin Rename Tool"
     };
 
     let header = Paragraph::new(title)
@@ -853,11 +890,11 @@ fn render_file_list(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         .enumerate()
         .map(|(i, file)| {
             let (icon, color) = match file.status {
-                ProcessingStatus::Pending => ("⏳", Color::Yellow),
-                ProcessingStatus::Processing => ("⚡", Color::Blue),
-                ProcessingStatus::Success => ("✅", Color::Green),
-                ProcessingStatus::Error => ("❌", Color::Red),
-                ProcessingStatus::Skipped => ("⏭️", Color::Gray),
+                ProcessingStatus::Pending => ("[PENDING]", Color::Yellow),
+                ProcessingStatus::Processing => ("[PROCESSING]", Color::Blue),
+                ProcessingStatus::Success => ("[SUCCESS]", Color::Green),
+                ProcessingStatus::Error => ("[ERROR]", Color::Red),
+                ProcessingStatus::Skipped => ("[SKIPPED]", Color::Gray),
             };
 
             let line = if app.current_processing == Some(i) {
@@ -893,16 +930,15 @@ fn render_file_list(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("► ");
+        .highlight_symbol("> ");
 
     f.render_stateful_widget(files_list, area, &mut app.list_state.clone());
 
     // Render scrollbar
-    if app.files.len() > area.height as usize - 2 {
-        let scrollbar = Scrollbar::default()
+    if app.files.len() > area.height as usize - 2 {        let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("↑"))
-            .end_symbol(Some("↓"));        f.render_stateful_widget(
+            .begin_symbol(Some("^"))
+            .end_symbol(Some("v"));        f.render_stateful_widget(
             scrollbar,
             area.inner(Margin {
                 vertical: 1,
@@ -1015,10 +1051,9 @@ fn render_help_popup(f: &mut Frame, _app: &App) {
         Line::from(vec![
             Span::styled("Jellyfin Rename Tool - Help", Style::default().add_modifier(Modifier::BOLD))
         ]),
-        Line::from(""),
-        Line::from("Navigation:"),
-        Line::from("  ↑/k     - Move up"),
-        Line::from("  ↓/j     - Move down"),
+        Line::from(""),        Line::from("Navigation:"),
+        Line::from("  Up/k    - Move up"),
+        Line::from("  Down/j  - Move down"),
         Line::from(""),
         Line::from("Actions:"),
         Line::from("  Enter   - Start processing"),
