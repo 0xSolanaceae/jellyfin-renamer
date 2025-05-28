@@ -51,14 +51,14 @@ pub struct RenameEngine {
 impl RenameEngine {
     pub fn new(config: RenameConfig) -> Result<Self> {
         let standard_pattern = Regex::new(
-            r"(?i)(?P<title>.*?)S(?P<season>\d{1,2})E(?P<episode>\d{2})(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
+            r"(?i)(?P<title>.*?)S(?P<season>\d{1,2})E(?P<episode>\d{2})(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi|ts)$"
         )?;
           let flexible_pattern = Regex::new(
-            r"(?i)(?P<title>.*?)\b(?P<season>\d{1,2})x(?P<episode>\d{2})\b(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi)$"
+            r"(?i)(?P<title>.*?)\b(?P<season>\d{1,2})x(?P<episode>\d{2})\b(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi|ts)$"
         )?;
 
         let movie_pattern = Regex::new(
-            r"(?i)^(?:Watch\s+)?(?P<title>.*?)(?:\s*-\s*(?P<suffix>.*?))?\.(?P<extension>mkv|mp4|avi)$"
+            r"(?i)^(?:Watch\s+)?(?P<title>.*?)(?:\s*-\s*(?P<suffix>.*?))?\.(?P<extension>mkv|mp4|avi|ts)$"
         )?;
 
         Ok(Self {
@@ -291,6 +291,7 @@ impl RenameEngine {
     }fn clean_movie_title(&self, title: &str, suffix: &str) -> String {
         let mut cleaned = title.trim().to_string();
         
+        // Remove prefixes like "watch", "download", "stream" at the beginning
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
             let pattern = format!("^{}", regex::escape(prefix));
@@ -303,7 +304,7 @@ impl RenameEngine {
             "1080p", "720p", "480p", "4k", "hd", "bluray", "blu-ray", "dvdrip", 
             "webrip", "web-dl", "hdtv", "x264", "x265", "h264", "h265", "xvid",
             "aac", "ac3", "dts", "5.1", "7.1", "atmos", "hdr", "dolby",
-            "yify", "rarbg", "ettv", "eztv", "torrent", "bit", "hexa watch"
+            "yify", "rarbg", "ettv", "eztv", "torrent", "bit", "hexa watch", "hexa"
         ];
         
         if !suffix.is_empty() {
@@ -311,7 +312,8 @@ impl RenameEngine {
                 .filter(|word| !word.is_empty())
                 .filter(|word| {
                     let word_lower = word.to_lowercase();
-                    !quality_indicators.iter().any(|indicator| word_lower.contains(indicator))
+                    !quality_indicators.iter().any(|indicator| word_lower.contains(indicator)) &&
+                    !word_lower.starts_with("watch")
                 })
                 .collect();
             
@@ -323,6 +325,7 @@ impl RenameEngine {
             }
         }
         
+        // Remove quality indicators
         for indicator in &quality_indicators {
             let pattern = format!(r"(?i)\b{}\b", regex::escape(indicator));
             if let Ok(re) = Regex::new(&pattern) {
@@ -330,6 +333,12 @@ impl RenameEngine {
             }
         }
         
+        // Remove "watch" patterns at the end with optional numbers (e.g., "Watch_2", "Watch 3")
+        if let Ok(watch_end_re) = Regex::new(r"(?i)\s*-?\s*(?:hexa\s*)?watch(?:_?\d+)?\s*$") {
+            cleaned = watch_end_re.replace(&cleaned, "").trim().to_string();
+        }
+        
+        // Remove year if not specified in config
         if self.config.year.is_none() {
             if let Ok(year_regex) = Regex::new(r"\b(19\d{2}|20\d{2})\b") {
                 if let Some(_year_match) = year_regex.find(&cleaned) {
@@ -338,6 +347,7 @@ impl RenameEngine {
             }
         }
         
+        // Final cleanup
         cleaned = cleaned.trim()
             .replace("  ", " ")
             .replace(" .", "")
@@ -348,6 +358,7 @@ impl RenameEngine {
             .trim()
             .to_string();
         
+        // Capitalize each word
         cleaned.split_whitespace()
             .map(|word| {
                 let mut chars: Vec<char> = word.chars().collect();

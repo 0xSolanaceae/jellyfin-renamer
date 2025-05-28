@@ -57,7 +57,8 @@ pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &Ap
         form_constraints.push(Constraint::Length(3));
     }
     
-    if (is_tv_show && app.files.len() == 1) || (app.file_type == FileType::Movie && app.files.len() == 1) {
+    // Year input only for single movies, never for TV shows
+    if app.file_type == FileType::Movie && app.files.len() == 1 {
         form_constraints.push(Constraint::Length(3));
     }
     
@@ -172,8 +173,8 @@ pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &Ap
         current_chunk_index += 1;
     }
 
-    // Year input for single files
-    let show_single_year = (is_tv_show && app.files.len() == 1) || (app.file_type == FileType::Movie && app.files.len() == 1);
+    // Year input for single movies only (removed TV show condition)
+    let show_single_year = app.file_type == FileType::Movie && app.files.len() == 1;
     if show_single_year {
         let year_style = if app.config_input_mode == ConfigInputMode::Year {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -181,23 +182,13 @@ pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &Ap
             Style::default().fg(Color::White)
         };
         
-        let year_title = if is_tv_show && app.files.len() == 1 {
-            if app.year_input.is_empty() {
-                "Year (REQUIRED for single TV episodes)"
-            } else {
-                "Year"
-            }
-        } else {
-            "Year (optional for movies)"
-        };
+        let year_title = "Year (optional for movies)";
         
         let year_display = if app.year_input.is_empty() {
             "[Enter year]".to_string()
         } else {
             app.year_input.clone()
         };
-        
-        let year_required = is_tv_show && app.files.len() == 1;
         
         let year_input = Paragraph::new(year_display.as_str())
             .style(year_style)
@@ -206,17 +197,9 @@ pub fn render_config_screen(f: &mut Frame, area: ratatui::layout::Rect, app: &Ap
                     .borders(Borders::ALL)
                     .title(year_title)
                     .border_style(if app.config_input_mode == ConfigInputMode::Year {
-                        if app.year_input.is_empty() && year_required {
-                            Style::default().fg(Color::Red) // Red border if empty and required
-                        } else {
-                            Style::default().fg(Color::Yellow) // Yellow border if focused
-                        }
+                        Style::default().fg(Color::Yellow)
                     } else {
-                        if app.year_input.is_empty() && year_required {
-                            Style::default().fg(Color::Red) // Red border if empty and required
-                        } else {
-                            Style::default().fg(Color::Green) // Green border if filled or optional
-                        }
+                        Style::default().fg(Color::Green)
                     }),
             );
         f.render_widget(year_input, form_chunks[current_chunk_index]);

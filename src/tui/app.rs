@@ -400,11 +400,13 @@ impl App {
                 } else {
                     self.config_input_mode = ConfigInputMode::Year;
                 }
-            }            ConfigInputMode::Season => {
-                if self.files.len() == 1 {
-                    self.config_input_mode = ConfigInputMode::Year;
-                } else {
+            }
+            ConfigInputMode::Season => {
+                // For TV shows, never go to Year - go directly to IMDb choice or Confirm
+                if self.files.len() > 1 {
                     self.config_input_mode = ConfigInputMode::ImdbChoice;
+                } else {
+                    self.config_input_mode = ConfigInputMode::Confirm;
                 }
             }
             ConfigInputMode::Year => {
@@ -440,14 +442,11 @@ impl App {
                 }
             }
             ConfigInputMode::Year => {
-                if self.file_type == FileType::TvShow {
-                    self.config_input_mode = ConfigInputMode::Season;
+                // Year is only for movies now
+                if !self.files.is_empty() {
+                    self.config_input_mode = ConfigInputMode::FileType;
                 } else {
-                    if !self.files.is_empty() {
-                        self.config_input_mode = ConfigInputMode::FileType;
-                    } else {
-                        self.config_input_mode = ConfigInputMode::Directory;
-                    }
+                    self.config_input_mode = ConfigInputMode::Directory;
                 }
             }
             ConfigInputMode::MovieYears => {
@@ -471,6 +470,8 @@ impl App {
                     } else {
                         self.config_input_mode = ConfigInputMode::ImdbChoice;
                     }
+                } else if self.file_type == FileType::TvShow && self.files.len() == 1 {
+                    self.config_input_mode = ConfigInputMode::Season;
                 } else if self.file_type == FileType::Movie && self.files.len() > 1 {
                     self.config_input_mode = ConfigInputMode::MovieYears;
                 } else {
