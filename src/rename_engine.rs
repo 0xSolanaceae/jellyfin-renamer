@@ -291,7 +291,6 @@ impl RenameEngine {
     }fn clean_movie_title(&self, title: &str, suffix: &str) -> String {
         let mut cleaned = title.trim().to_string();
         
-        // Remove prefixes like "watch", "download", "stream" at the beginning
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
             let pattern = format!("^{}", regex::escape(prefix));

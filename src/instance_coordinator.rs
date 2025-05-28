@@ -117,7 +117,7 @@ impl InstanceCoordinator {
         let mut last_file_count = 0;
         let mut stable_count = 0;
         
-        println!("Collecting files from multiple instances...");
+        println!("Collecting instances...");
         
         while start_time.elapsed() < max_wait_time {
             thread::sleep(Duration::from_millis(100));
@@ -137,7 +137,7 @@ impl InstanceCoordinator {
                 }
                 
                 if collected_files.len() != last_file_count {
-                    println!("Found {} files so far...", collected_files.len());
+                    println!("Instance {} ...", collected_files.len());
                 }
                 
                 if collected_files.len() == last_file_count {
@@ -156,7 +156,7 @@ impl InstanceCoordinator {
         let _ = fs::remove_dir_all(files_dir);
         
         let final_files: Vec<String> = collected_files.into_iter().collect();
-        println!("Collected {} files total", final_files.len());
+        println!("Collected {} instances", final_files.len());
         
         Some(final_files)
     }
