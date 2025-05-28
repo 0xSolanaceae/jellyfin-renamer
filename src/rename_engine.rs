@@ -55,10 +55,8 @@ impl RenameEngine {
         )?;
           let flexible_pattern = Regex::new(
             r"(?i)(?P<title>.*?)\b(?P<season>\d{1,2})x(?P<episode>\d{2})\b(?P<suffix>.*)\.(?P<extension>mkv|mp4|avi|ts)$"
-        )?;
-
-        let movie_pattern = Regex::new(
-            r"(?i)^(?:Watch\s+)?(?P<title>.*?)(?:\s*-\s*(?P<suffix>.*?))?\.(?P<extension>mkv|mp4|avi|ts)$"
+        )?;        let movie_pattern = Regex::new(
+            r"(?i)^(?:Watch\s+)?(?P<title>.*?)(?:\.(?P<year>\d{4}))?(?:\.(?P<quality>.*?))?\.(?P<extension>mkv|mp4|avi|ts)$"
         )?;
 
         Ok(Self {
@@ -258,9 +256,10 @@ impl RenameEngine {
         if let Some(captures) = self.movie_pattern.captures(filename) {
             let raw_title = captures.name("title").unwrap().as_str();
             let extension = captures.name("extension").unwrap().as_str();
-            let suffix = captures.name("suffix").map(|s| s.as_str()).unwrap_or("");
+            let extracted_year = captures.name("year").map(|y| y.as_str());
+            let quality_part = captures.name("quality").map(|q| q.as_str()).unwrap_or("");
             
-            let cleaned_title = self.clean_movie_title(raw_title, suffix);
+            let cleaned_title = self.clean_movie_title(raw_title, quality_part);
             
             if cleaned_title.is_empty() {
                 return Ok(None);
@@ -268,9 +267,14 @@ impl RenameEngine {
             
             let sanitized_title = sanitize_filename(&cleaned_title.replace(' ', "_"));
             
-            let year_part = self.config.year.as_ref()
-                .map(|y| format!("_({})", y))
-                .unwrap_or_default();
+            // Use extracted year from filename if config year is None, otherwise use config year
+            let year_part = if let Some(config_year) = &self.config.year {
+                format!("_({})", config_year)
+            } else if let Some(extracted_year) = extracted_year {
+                format!("_({})", extracted_year)
+            } else {
+                String::new()
+            };
                 
             let new_name = format!("{}{}.{}", sanitized_title, year_part, extension);
             
@@ -288,74 +292,64 @@ impl RenameEngine {
         }
         
         Ok(None)
-    }fn clean_movie_title(&self, title: &str, suffix: &str) -> String {
+    }fn clean_movie_title(&self, title: &str, quality_part: &str) -> String {
+        let _ = quality_part;
         let mut cleaned = title.trim().to_string();
         
+        // Remove common prefixes
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
-            let pattern = format!("^{}", regex::escape(prefix));
+            let pattern = format!("^{}\\s*", regex::escape(prefix));
             if let Ok(re) = Regex::new(&format!("(?i){}", pattern)) {
-                cleaned = re.replace(&cleaned, "").trim().to_string();
+                cleaned = re.replace(&cleaned,   "").trim().to_string();
             }
         }
         
+        // Replace dots, underscores, and hyphens with spaces
+        cleaned = cleaned.replace('.', " ")
+                        .replace('_', " ")
+                        .replace('-', " ");
+        
+        // Define quality indicators that should be removed
         let quality_indicators = [
-            "1080p", "720p", "480p", "4k", "hd", "bluray", "blu-ray", "dvdrip", 
-            "webrip", "web-dl", "hdtv", "x264", "x265", "h264", "h265", "xvid",
-            "aac", "ac3", "dts", "5.1", "7.1", "atmos", "hdr", "dolby",
-            "yify", "rarbg", "ettv", "eztv", "torrent", "bit", "hexa watch", "hexa"
+            "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
+            "x264", "x265", "h264", "h265", "xvid", "divx", "mpeg", "hevc",
+            "bluray", "blu ray", "webrip", "web dl", "hdtv", "dvdrip", "brrip",
+            "aac", "ac3", "mp3", "dts", "flac", "dd5 1", "dd5", "dd+", "atmos",
+            "5 1", "7 1", "2 0", "stereo", "mono", "nf", "netflix", "amzn", "hulu",
+            "pahe in", "rarbg", "yify", "ettv", "eztv", "torrent", "bit", "av1",
+            "hexa", "watch", "download", "stream", "saon"
         ];
         
-        if !suffix.is_empty() {
-            let suffix_words: Vec<&str> = suffix.split(&[' ', '.', '-', '_'][..])
-                .filter(|word| !word.is_empty())
-                .filter(|word| {
-                    let word_lower = word.to_lowercase();
-                    !quality_indicators.iter().any(|indicator| word_lower.contains(indicator)) &&
-                    !word_lower.starts_with("watch")
-                })
-                .collect();
+        // Remove quality indicators from the main title
+        let words: Vec<&str> = cleaned.split_whitespace().collect();
+        let mut clean_words = Vec::new();
+        
+        for word in words {
+            let word_lower = word.to_lowercase();
+            let should_keep = !quality_indicators.iter().any(|indicator| {
+                word_lower == *indicator || word_lower.contains(indicator)
+            });
             
-            if !suffix_words.is_empty() && suffix_words.len() <= 3 {
-                let suffix_text = suffix_words.join(" ");
-                if !cleaned.to_lowercase().contains(&suffix_text.to_lowercase()) {
-                    cleaned = format!("{} {}", cleaned, suffix_text);
-                }
+            if should_keep {
+                clean_words.push(word);
             }
         }
         
-        // Remove quality indicators
-        for indicator in &quality_indicators {
-            let pattern = format!(r"(?i)\b{}\b", regex::escape(indicator));
-            if let Ok(re) = Regex::new(&pattern) {
-                cleaned = re.replace_all(&cleaned, "").to_string();
-            }
-        }
+        cleaned = clean_words.join(" ");
         
-        // Remove "watch" patterns at the end with optional numbers (e.g., "Watch_2", "Watch 3")
-        if let Ok(watch_end_re) = Regex::new(r"(?i)\s*-?\s*(?:hexa\s*)?watch(?:_?\d+)?\s*$") {
-            cleaned = watch_end_re.replace(&cleaned, "").trim().to_string();
-        }
-        
-        // Remove year if not specified in config
+        // Remove any year patterns if not specified in config (they're handled separately now)
         if self.config.year.is_none() {
             if let Ok(year_regex) = Regex::new(r"\b(19\d{2}|20\d{2})\b") {
-                if let Some(_year_match) = year_regex.find(&cleaned) {
-                    cleaned = year_regex.replace(&cleaned, "").trim().to_string();
-                }
+                cleaned = year_regex.replace_all(&cleaned, "").to_string();
             }
         }
         
-        // Final cleanup
+        // Final cleanup - remove extra spaces and normalize
         cleaned = cleaned.trim()
-            .replace("  ", " ")
-            .replace(" .", "")
-            .replace(" -", "")
-            .replace("- ", "")
-            .trim_end_matches('-')
-            .trim_end_matches('.')
-            .trim()
-            .to_string();
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" ");
         
         // Capitalize each word
         cleaned.split_whitespace()
@@ -368,7 +362,7 @@ impl RenameEngine {
             })
             .collect::<Vec<String>>()
             .join(" ")
-    }    fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
+    }fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
         let cleaned = suffix.trim().to_string();
           let quality_indicators = [
             "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
