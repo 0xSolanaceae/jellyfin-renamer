@@ -370,12 +370,11 @@ impl RenameEngine {
             .join(" ")
     }    fn extract_episode_title_from_suffix(&self, suffix: &str) -> String {
         let cleaned = suffix.trim().to_string();
-        
-        let quality_indicators = [
+          let quality_indicators = [
             "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
             "x264", "x265", "h264", "h265", "xvid", "divx", "mpeg",
             "bluray", "blu-ray", "webrip", "web-dl", "hdtv", "dvdrip", "brrip",
-            "aac", "ac3", "mp3", "dts", "flac", "dd5.1", "dd+", "atmos",
+            "aac", "ac3", "mp3", "dts", "flac", "dd5.1", "dd5", "dd+", "atmos",
             "5.1", "7.1", "2.0", "stereo", "mono",
             "pahe.in", "rarbg", "yify", "ettv", "eztv", "torrent", "bit",
             "hexa", "watch", "download", "stream", "720p.bluray", "1080p.bluray"
