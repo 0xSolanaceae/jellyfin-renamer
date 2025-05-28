@@ -115,8 +115,7 @@ impl App {
                         episode_title: String::new(),
                     });
                 }
-            }
-        }
+            }        }
           app.files = files;
         app.stats.total = app.files.len();
         
@@ -378,12 +377,10 @@ impl App {
     pub fn advance_config_step(&mut self) {
         match self.config_input_mode {
             ConfigInputMode::FileType => {
-                // Skip directory if we have pre-selected files
                 if !self.files.is_empty() {
                     if self.file_type == FileType::TvShow {
                         self.config_input_mode = ConfigInputMode::Season;
                     } else {
-                        // For movies with multiple files, go to MovieYears
                         if self.files.len() > 1 {
                             self.config_input_mode = ConfigInputMode::MovieYears;
                         } else {
@@ -402,7 +399,6 @@ impl App {
                 }
             }
             ConfigInputMode::Season => {
-                // For TV shows, never go to Year - go directly to IMDb choice or Confirm
                 if self.files.len() > 1 {
                     self.config_input_mode = ConfigInputMode::ImdbChoice;
                 } else {
@@ -607,7 +603,11 @@ impl App {
                         file_item.episode_title = file_rename.episode_title;
                     }
                     // If no pattern matches, keep original name
-                }
+                }            }
+
+            // Sort files by episode number for TV shows
+            if self.file_type == FileType::TvShow {
+                self.sort_files_by_episode();
             }
 
             if !self.files.is_empty() {
@@ -662,9 +662,13 @@ impl App {
                         } else { 
                             ProcessingStatus::Skipped 
                         };
-                    }
-                }
+                    }                }
             }
+        }
+
+        // Sort files by episode number for TV shows
+        if self.file_type == FileType::TvShow {
+            self.sort_files_by_episode();
         }
 
         Ok(())
@@ -792,5 +796,18 @@ impl App {
         } else if self.season_input.is_empty() {
             self.season_input = "S01".to_string();
         }
+    }
+
+    fn sort_files_by_episode(&mut self) {
+        self.files.sort_by(|a, b| {
+            match (a.episode_number, b.episode_number) {
+                (ep_a, ep_b) if ep_a > 0 && ep_b > 0 => ep_a.cmp(&ep_b),
+                (ep_a, 0) if ep_a > 0 => std::cmp::Ordering::Less,
+                (0, ep_b) if ep_b > 0 => std::cmp::Ordering::Greater,
+                (0, 0) => std::cmp::Ordering::Equal,
+                // This case shouldn't happen, but handle it
+                _ => a.original_name.cmp(&b.original_name),
+            }
+        });
     }
 }

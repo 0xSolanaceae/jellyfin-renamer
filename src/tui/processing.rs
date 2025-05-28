@@ -87,6 +87,9 @@ impl App {
                         file_item.episode_title = file_rename.episode_title;
                     }
                 }
+            }            // Sort files by episode number for TV shows
+            if self.file_type == crate::rename_engine::FileType::TvShow {
+                self.sort_files_by_episode();
             }
 
             if !self.files.is_empty() {
@@ -95,7 +98,7 @@ impl App {
             }
         }
         Ok(())
-    }    pub async fn refresh_selected_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    }pub async fn refresh_selected_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if self.files.is_empty() || self.rename_engine.is_none() {
             return Ok(());
         }
@@ -129,9 +132,13 @@ impl App {
                         } else { 
                             ProcessingStatus::Skipped 
                         };
-                    }
-                }
+                    }                }
             }
+        }
+
+        // Sort files by episode number for TV shows
+        if self.file_type == crate::rename_engine::FileType::TvShow {
+            self.sort_files_by_episode();
         }
 
         Ok(())

@@ -61,12 +61,15 @@ impl App {
                 error_message: None,
                 episode_number: fr.episode_number,
                 episode_title: fr.episode_title.clone(),
-            }).collect();
-
-            self.stats.total = self.files.len();
+            }).collect();            self.stats.total = self.files.len();
             self.stats.processed = 0;
             self.stats.successful = 0;
             self.stats.failed = 0;
+
+            // Sort files by episode number for TV shows
+            if self.file_type == FileType::TvShow {
+                self.sort_files_by_episode();
+            }
 
             if !self.files.is_empty() {
                 self.list_state.select(Some(0));
