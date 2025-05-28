@@ -113,14 +113,25 @@ impl InstanceCoordinator {
         let mut collected_files = HashSet::new();
         
         let start_time = Instant::now();
-        let max_wait_time = Duration::from_millis(5000);
+        let absolute_max_wait_time = Duration::from_millis(30000); // 30 seconds absolute maximum
         let mut last_file_count = 0;
         let mut stable_count = 0;
+        let mut last_activity_time = Instant::now();
+        
+        // More generous stability requirements
+        let stability_threshold = 30; // 3 seconds of stability (30 * 100ms)
+        let max_inactivity_time = Duration::from_millis(10000); // 10 seconds without any new files
         
         println!("Collecting instances...");
         
-        while start_time.elapsed() < max_wait_time {
+        loop {
             thread::sleep(Duration::from_millis(100));
+            
+            // Check absolute maximum timeout (safety net)
+            if start_time.elapsed() > absolute_max_wait_time {
+                println!("Reached absolute maximum wait time, proceeding...");
+                break;
+            }
             
             if let Ok(entries) = fs::read_dir(files_dir) {
                 collected_files.clear();
@@ -136,18 +147,34 @@ impl InstanceCoordinator {
                     }
                 }
                 
+                // Check if we got new files
                 if collected_files.len() != last_file_count {
-                    println!("Instance {} ...", collected_files.len());
+                    if collected_files.len() > last_file_count {
+                        println!("Instance {} ...", collected_files.len());
+                        last_activity_time = Instant::now(); // Reset activity timer
+                    }
+                    stable_count = 0; // Reset stability counter
+                    last_file_count = collected_files.len();
+                } else {
+                    stable_count += 1;
                 }
                 
-                if collected_files.len() == last_file_count {
-                    stable_count += 1;
-                    if stable_count >= 10 {
-                        break;
-                    }
+                // Check if we should stop collecting
+                let should_stop = if collected_files.is_empty() {
+                    // If no files collected yet, keep waiting but respect inactivity timeout
+                    last_activity_time.elapsed() > max_inactivity_time
                 } else {
-                    stable_count = 0;
-                    last_file_count = collected_files.len();
+                    // We have files, check for stability
+                    stable_count >= stability_threshold
+                };
+                
+                if should_stop {
+                    if collected_files.is_empty() {
+                        println!("No instances collected after waiting, proceeding...");
+                    } else {
+                        println!("No new instances detected for {} seconds, proceeding...", stability_threshold / 10);
+                    }
+                    break;
                 }
             }
         }
