@@ -267,7 +267,6 @@ impl RenameEngine {
             
             let sanitized_title = sanitize_filename(&cleaned_title.replace(' ', "_"));
             
-            // Use extracted year from filename if config year is None, otherwise use config year
             let year_part = if let Some(config_year) = &self.config.year {
                 format!("_({})", config_year)
             } else if let Some(extracted_year) = extracted_year {
@@ -296,7 +295,6 @@ impl RenameEngine {
         let _ = quality_part;
         let mut cleaned = title.trim().to_string();
         
-        // Remove common prefixes
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
             let pattern = format!("^{}\\s*", regex::escape(prefix));
@@ -305,12 +303,10 @@ impl RenameEngine {
             }
         }
         
-        // Replace dots, underscores, and hyphens with spaces
         cleaned = cleaned.replace('.', " ")
                         .replace('_', " ")
                         .replace('-', " ");
         
-        // Define quality indicators that should be removed
         let quality_indicators = [
             "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
             "x264", "x265", "h264", "h265", "xvid", "divx", "mpeg", "hevc",
@@ -321,7 +317,6 @@ impl RenameEngine {
             "hexa", "watch", "download", "stream", "saon"
         ];
         
-        // Remove quality indicators from the main title
         let words: Vec<&str> = cleaned.split_whitespace().collect();
         let mut clean_words = Vec::new();
         
@@ -338,20 +333,17 @@ impl RenameEngine {
         
         cleaned = clean_words.join(" ");
         
-        // Remove any year patterns if not specified in config (they're handled separately now)
         if self.config.year.is_none() {
             if let Ok(year_regex) = Regex::new(r"\b(19\d{2}|20\d{2})\b") {
                 cleaned = year_regex.replace_all(&cleaned, "").to_string();
             }
         }
         
-        // Final cleanup - remove extra spaces and normalize
         cleaned = cleaned.trim()
             .split_whitespace()
             .collect::<Vec<&str>>()
             .join(" ");
         
-        // Capitalize each word
         cleaned.split_whitespace()
             .map(|word| {
                 let mut chars: Vec<char> = word.chars().collect();
