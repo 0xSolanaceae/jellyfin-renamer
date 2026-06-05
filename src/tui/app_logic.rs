@@ -44,7 +44,9 @@ impl App {
         let config = config.build()?;
 
         let mut engine = RenameEngine::new(config)?;
-        engine.fetch_imdb_titles().await?;
+        if let Some(err_msg) = engine.fetch_imdb_titles().await? {
+            self.set_status_message(format!("IMDb: {}", err_msg));
+        }
         
         self.rename_engine = Some(engine);
         Ok(())

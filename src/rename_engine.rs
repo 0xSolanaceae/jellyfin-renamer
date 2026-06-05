@@ -3,7 +3,6 @@ use std::fs;
 use anyhow::{Result, Context};
 use regex::Regex;
 use reqwest;
-use scraper::{Html, Selector};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileType {
@@ -66,21 +65,24 @@ impl RenameEngine {
             movie_pattern,
             config,
         })
-    }    pub async fn fetch_imdb_titles(&mut self) -> Result<()> {
+    }    pub async fn fetch_imdb_titles(&mut self) -> Result<Option<String>> {
         if !self.config.use_imdb {
-            return Ok(());
+            return Ok(None);
         }
 
-        let imdb_id = self.config.imdb_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("IMDb ID is required when use_imdb is true"))?;
+        let imdb_id = match self.config.imdb_id.as_ref() {
+            Some(id) => id.clone(),
+            None => return Ok(Some("IMDb ID is required when use_imdb is true".to_string())),
+        };
 
-        let titles = scrape_imdb_episodes(imdb_id, Some(self.config.season_num)).await?;
-        
-        if !titles.is_empty() {
-            self.imdb_titles = titles;
+        match scrape_imdb_episodes(&imdb_id, Some(self.config.season_num)).await {
+            Ok(titles) if !titles.is_empty() => {
+                self.imdb_titles = titles;
+                Ok(None)
+            }
+            Ok(_) => Ok(Some("OMDb returned no episodes for this title/season".to_string())),
+            Err(e) => Ok(Some(format!("Failed to fetch episode titles: {}", e))),
         }
-
-        Ok(())
     }
     
     #[allow(dead_code)]
@@ -366,11 +368,13 @@ impl RenameEngine {
           let quality_indicators = [
             "1080p", "720p", "480p", "4k", "2160p", "hd", "fhd", "uhd",
             "x264", "x265", "h264", "h265", "xvid", "divx", "mpeg",
-            "bluray", "blu-ray", "webrip", "web-dl", "hdtv", "dvdrip", "brrip",
+            "bluray", "blu-ray", "blu", "webrip", "web-dl", "web", "dl",
+            "hdtv", "dvdrip", "brrip",
             "aac", "ac3", "mp3", "dts", "flac", "dd5.1", "dd5", "dd+", "atmos",
             "5.1", "7.1", "2.0", "stereo", "mono",
-            "pahe.in", "rarbg", "yify", "ettv", "eztv", "torrent", "bit",
-            "hexa", "watch", "download", "stream", "720p.bluray", "1080p.bluray"
+            "nf", "amzn", "hulu", "dsnp", "atvp", "pcok",
+            "pahe.in", "pahe", "rarbg", "yify", "ettv", "eztv", "torrent", "bit",
+            "hexa", "watch", "download", "stream", "720p.bluray", "1080p.bluray",
         ];
           let words: Vec<&str> = cleaned.split(&['.', '-', '_', ' '][..])
             .filter(|word| !word.is_empty())
@@ -455,7 +459,7 @@ impl RenameEngine {
 }
 
 pub fn sanitize_filename(filename: &str) -> String {
-    let re = Regex::new(r#"[<>:"/\\|?*]"#).unwrap();
+    let re = Regex::new(r#"[<>:"/\\|?*,]"#).unwrap();
     re.replace_all(filename, "_").to_string()
 }
 
@@ -509,66 +513,52 @@ pub fn extract_season_from_filename(filename: &str) -> Option<u32> {
 }
 
 pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<Vec<String>> {
-    let mut url = format!("https://www.imdb.com/title/{}/episodes", imdb_id);
-    if let Some(season_num) = season {
-        url.push_str(&format!("?season={}", season_num));
-    }
+    // OMDb API returns clean JSON and is not behind bot-protection.
+    // The "trilogy" key is a publicly usable demo key.
+    let season_num = season.unwrap_or(1);
+    let url = format!(
+        "https://www.omdbapi.com/?i={}&Season={}&type=series&apikey=trilogy",
+        imdb_id, season_num
+    );
 
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("User-Agent", "Mozilla/5.0")
         .send()
         .await
-        .context("Failed to fetch IMDb page")?;
+        .context("Failed to fetch OMDb episode data")?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
+        return Err(anyhow::anyhow!("OMDb HTTP error: {}", response.status()));
     }
 
-    let html = response.text().await?;    let document = Html::parse_document(&html);
-    
-    let selectors = [
-        "div.ipc-title.ipc-title--base.ipc-title--title .ipc-title__text",
-        ".titleColumn a",
-        ".ipc-title__text",
-        "h3.ipc-title__text",
-    ];
+    let json: serde_json::Value = response.json().await
+        .context("Failed to parse OMDb JSON response")?;
 
-    let mut results = Vec::new();
-    
-    for selector_str in &selectors {
-        if let Ok(selector) = Selector::parse(selector_str) {
-            for element in document.select(&selector) {
-                let text = element.text().collect::<String>();
-                if text.contains('∙') {
-                    if let Some(title) = text.split('∙').last() {
-                        let cleaned_title = title.trim().to_string();
-                        if !cleaned_title.is_empty() {
-                            results.push(cleaned_title);
-                        }
-                    }                } else if !text.trim().is_empty() && !text.contains("S.") {
-                    results.push(text.trim().to_string());
-                }
-            }
-        }
-        
-        if !results.is_empty() {
-            break;        }
+    if json.get("Response").and_then(|v| v.as_str()) == Some("False") {
+        let err = json.get("Error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        return Err(anyhow::anyhow!("OMDb error: {}", err));
     }
 
-    let mut unique_results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    
-    for result in results {
-        if seen.insert(result.clone()) {
-            unique_results.push(result);
-        }
-    }
+    let episodes = json
+        .get("Episodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("No episodes field in OMDb response"))?;
 
-    Ok(unique_results)
+    // Episodes are returned in order; sort by episode number to be safe.
+    let mut numbered: Vec<(u64, String)> = episodes
+        .iter()
+        .filter_map(|ep| {
+            let title = ep.get("Title")?.as_str()?.to_string();
+            let num: u64 = ep.get("Episode")?.as_str()?.parse().ok()?;
+            Some((num, title))
+        })
+        .collect();
+
+    numbered.sort_by_key(|(n, _)| *n);
+
+    Ok(numbered.into_iter().map(|(_, t)| t).collect())
 }
 
 pub struct ConfigBuilder {

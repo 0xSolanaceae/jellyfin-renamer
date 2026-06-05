@@ -24,7 +24,9 @@ impl InstanceCoordinator {
             app_id: "jellyfin_rename".to_string(),
             session_id,
         }
-    }    pub fn collect_files_from_instances(&self, initial_file: &str) -> Option<Vec<String>> {
+    }
+
+    pub fn collect_files_from_instances(&self, initial_file: &str) -> Option<Vec<String>> {
         let base_path = self.temp_dir.join(&self.app_id);
         
         let _ = fs::create_dir_all(&base_path);
@@ -43,7 +45,9 @@ impl InstanceCoordinator {
                 None
             }
         }
-    }    fn try_become_coordinator(&self, lock_file_path: &std::path::Path) -> Option<()> {
+    }
+
+    fn try_become_coordinator(&self, lock_file_path: &std::path::Path) -> Option<()> {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -72,7 +76,9 @@ impl InstanceCoordinator {
                 None
             }
         }
-    }    fn is_process_running(&self, pid: u32) -> bool {
+    }
+
+    fn is_process_running(&self, pid: u32) -> bool {
         use std::process::Command;
         
         match Command::new("tasklist")
@@ -85,7 +91,9 @@ impl InstanceCoordinator {
             }
             Err(_) => true
         }
-    }    fn add_file_to_collection(&self, files_dir: &std::path::Path, file_path: &str) {
+    }
+
+    fn add_file_to_collection(&self, files_dir: &std::path::Path, file_path: &str) {
         let file_id = format!("{}.txt", self.session_id);
         let file_entry_path = files_dir.join(&file_id);
         
@@ -105,7 +113,9 @@ impl InstanceCoordinator {
                 }
             }
         }
-    }    fn handle_coordinator_instance(
+    }
+
+    fn handle_coordinator_instance(
         &self,
         files_dir: &std::path::Path,
         lock_file_path: &std::path::Path,
@@ -113,23 +123,18 @@ impl InstanceCoordinator {
         let mut collected_files = HashSet::new();
         
         let start_time = Instant::now();
-        let absolute_max_wait_time = Duration::from_millis(30000); // 30 seconds absolute maximum
+        let absolute_max_wait_time = Duration::from_millis(30000);
         let mut last_file_count = 0;
         let mut stable_count = 0;
         let mut last_activity_time = Instant::now();
         
-        // More generous stability requirements
-        let stability_threshold = 30; // 3 seconds of stability (30 * 100ms)
-        let max_inactivity_time = Duration::from_millis(10000); // 10 seconds without any new files
-        
-        println!("Collecting instances...");
+        let stability_threshold = 5; // 500ms of stability (5 * 100ms)
+        let max_inactivity_time = Duration::from_millis(3000);
         
         loop {
             thread::sleep(Duration::from_millis(100));
             
-            // Check absolute maximum timeout (safety net)
             if start_time.elapsed() > absolute_max_wait_time {
-                println!("Reached absolute maximum wait time, proceeding...");
                 break;
             }
             
@@ -147,33 +152,23 @@ impl InstanceCoordinator {
                     }
                 }
                 
-                // Check if we got new files
                 if collected_files.len() != last_file_count {
                     if collected_files.len() > last_file_count {
-                        println!("Instance {} ...", collected_files.len());
-                        last_activity_time = Instant::now(); // Reset activity timer
+                        last_activity_time = Instant::now();
                     }
-                    stable_count = 0; // Reset stability counter
+                    stable_count = 0;
                     last_file_count = collected_files.len();
                 } else {
                     stable_count += 1;
                 }
                 
-                // Check if we should stop collecting
                 let should_stop = if collected_files.is_empty() {
-                    // If no files collected yet, keep waiting but respect inactivity timeout
                     last_activity_time.elapsed() > max_inactivity_time
                 } else {
-                    // We have files, check for stability
                     stable_count >= stability_threshold
                 };
                 
                 if should_stop {
-                    if collected_files.is_empty() {
-                        println!("No instances collected after waiting, proceeding...");
-                    } else {
-                        println!("No new instances detected for {} seconds, proceeding...", stability_threshold / 10);
-                    }
                     break;
                 }
             }
@@ -183,7 +178,6 @@ impl InstanceCoordinator {
         let _ = fs::remove_dir_all(files_dir);
         
         let final_files: Vec<String> = collected_files.into_iter().collect();
-        println!("Collected {} instances", final_files.len());
         
         Some(final_files)
     }

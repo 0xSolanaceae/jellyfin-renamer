@@ -8,7 +8,8 @@ mod tui;
 use instance_coordinator::InstanceCoordinator;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {    let args: Vec<String> = env::args().collect();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
     
     let selected_files = if args.len() >= 2 {
         let coordinator = InstanceCoordinator::new();
@@ -32,7 +33,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {    let args: Vec<Str
         }
     } else {
         vec![]
-    };    let directory_arg = if args.len() >= 2 {
+    };
+
+    let directory_arg = if args.len() >= 2 {
         let path = Path::new(&args[1]);
         if path.is_dir() {
             Some(args[1].clone())
