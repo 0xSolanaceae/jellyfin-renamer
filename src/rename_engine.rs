@@ -291,9 +291,16 @@ impl RenameEngine {
         }
         
         Ok(None)
-    }fn clean_movie_title(&self, title: &str, quality_part: &str) -> String {
+    }    fn clean_movie_title(&self, title: &str, quality_part: &str) -> String {
         let _ = quality_part;
         let mut cleaned = title.trim().to_string();
+        
+        // Handle "Hexa Watch" case - remove "Watch" prefix and hyphen
+        if let Ok(hexa_watch_re) = Regex::new(r"(?i)^Watch\s+(.*?)\s*-\s*Hexa\s+Watch$") {
+            if let Some(captures) = hexa_watch_re.captures(&cleaned) {
+                cleaned = captures.get(1).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+            }
+        }
         
         let prefixes = ["watch", "download", "stream"];
         for prefix in &prefixes {
@@ -314,7 +321,7 @@ impl RenameEngine {
             "aac", "ac3", "mp3", "dts", "flac", "dd5 1", "dd5", "dd+", "atmos",
             "5 1", "7 1", "2 0", "stereo", "mono", "nf", "netflix", "amzn", "hulu",
             "pahe in", "rarbg", "yify", "ettv", "eztv", "torrent", "bit", "av1",
-            "hexa", "watch", "download", "stream", "saon"
+            "hexa", "watch", "download", "stream", "saon", "hexa watch"
         ];
         
         let words: Vec<&str> = cleaned.split_whitespace().collect();
@@ -386,10 +393,6 @@ impl RenameEngine {
                 break;
             }
             title_words.push(word);
-            
-            if title_words.len() >= 3 {
-                break;
-            }
         }
         
         if title_words.is_empty() {
@@ -514,7 +517,9 @@ pub async fn scrape_imdb_episodes(imdb_id: &str, season: Option<u32>) -> Result<
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .send()
         .await
         .context("Failed to fetch IMDb page")?;
